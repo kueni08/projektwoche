@@ -22,7 +22,11 @@ Die Online-Datenbank enthält Kennungen, zufällige Wahlcodes, Wünsche, Angebot
 
 Die Namensliste kann zusätzlich mit AES-GCM verschlüsselt exportiert werden (PBKDF2-SHA256, 250000 Iterationen, zufälliger Salt und IV). Der Import bleibt vollständig im Browser. Browserdatenlöschung entfernt lokale Namen; vorher sichern. Die lokale Speicherung selbst ist nicht verschlüsselt. Auf gemeinsam genutzten Geräten nach Gebrauch «Namen hier entfernen» verwenden.
 
-Lehrpersonen verwenden einen gemeinsam verwalteten, zufälligen 256-Bit-Zugangscode. Der Server erhält nur dessen SHA-256-Hash als Secret `ADMIN_HASH`. Der eingegebene Code bleibt bis zum Abmelden/Neuladen im Arbeitsspeicher des Browsers. Jeder Kinderwahlcode besitzt 80 Bit Zufall und erlaubt nur Zugriff auf die eigene Wahl. Für personalisierte Lehrpersonenkonten und einzelne Zugriffs-Widerrufe wäre eine spätere Erweiterung erforderlich.
+Lehrpersonen verwenden einen gemeinsam verwalteten, zufälligen 256-Bit-Zugangscode. Der Server erhält nur dessen SHA-256-Hash als Secret `ADMIN_HASH`. Der eingegebene Code bleibt bis zum Abmelden/Neuladen im Arbeitsspeicher des Browsers. Kinderwahlcodes sind zufällig, eindeutig und vierstellig (1000–9999), damit Excel keine führenden Nullen entfernen kann. Zusätzlich wird ein gemeinsamer Kinderlink benötigt, dessen zufälliger Schlüssel im URL-Fragment steht und nur an die eigene API gesendet wird. Der Lehrpersonenbereich zeigt diesen Link an; Codezettel enthalten ihn ebenfalls. 15 falsche Anmeldeversuche pro Netzwerk innerhalb von 15 Minuten führen zu einer zeitlichen Sperre. Vier Ziffern bieten keine starke persönliche Identitätsprüfung; den Kinderlink und fremde Wahlcodes vertraulich behandeln. Für personalisierte Lehrpersonenkonten und einzelne Zugriffs-Widerrufe wäre eine spätere Erweiterung erforderlich.
+
+## Gestaltung
+
+Original-Eule und Farb-/Schriftsystem aus `kueni08/unterrichtsplanung-opfikon` (Wochenatelier). `public/logo-eule.svg` bleibt die Originalgrafik; `eule-laedt.svg` ergänzt lediglich eine sanfte Kopfdrehung der Gesichtselemente. Bei reduzierter Bewegung bleibt die Eule statisch. Keine HeCo-Gestaltung.
 
 ## Verteilungsverfahren
 

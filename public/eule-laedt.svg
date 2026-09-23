@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Wochenatelier Eule">
+  <defs>
+    <clipPath id="belly"><ellipse cx="256" cy="318" rx="74" ry="76"/></clipPath>
+    <clipPath id="wingL"><path d="M150 236 C112 262 104 336 136 388 C160 372 178 318 176 250 Z"/></clipPath>
+    <clipPath id="wingR"><path d="M362 236 C400 262 408 336 376 388 C352 372 334 318 336 250 Z"/></clipPath>
+  </defs>
+
+  <!-- Körper mit Ohrbüscheln -->
+  <path d="M146 146 L162 70 L220 118 Q256 108 292 118 L350 70 L366 146 Q398 204 394 284 Q386 386 256 408 Q126 386 118 284 Q114 204 146 146 Z" fill="#17324d"/>
+
+  <g class="owl-head">
+  <!-- Gesichtsscheibe -->
+  <path d="M256 128 C300 118 350 132 350 178 C350 222 306 236 256 226 C206 236 162 222 162 178 C162 132 212 118 256 128 Z" fill="#f6f2ea"/>
+
+  <!-- Augen -->
+  <circle cx="211" cy="176" r="36" fill="#fff" stroke="#17324d" stroke-width="7"/>
+  <circle cx="301" cy="176" r="36" fill="#fff" stroke="#17324d" stroke-width="7"/>
+  <circle cx="216" cy="180" r="16" fill="#17324d"/>
+  <circle cx="296" cy="180" r="16" fill="#17324d"/>
+  <circle cx="222" cy="174" r="5" fill="#fff"/>
+  <circle cx="302" cy="174" r="5" fill="#fff"/>
+
+  <!-- Schnabel -->
+  <path d="M243 206 L269 206 L256 230 Z" fill="#f2a93b" stroke="#17324d" stroke-width="3" stroke-linejoin="round"/>
+
+  </g>
+  <!-- Brust: Regenbogen -->
+  <g clip-path="url(#belly)">
+    <rect x="170" y="242" width="172" height="26" fill="#e40303"/>
+    <rect x="170" y="268" width="172" height="26" fill="#ff8c00"/>
+    <rect x="170" y="294" width="172" height="26" fill="#ffed00"/>
+    <rect x="170" y="320" width="172" height="26" fill="#008026"/>
+    <rect x="170" y="346" width="172" height="26" fill="#24408e"/>
+    <rect x="170" y="372" width="172" height="26" fill="#732982"/>
+  </g>
+  <ellipse cx="256" cy="318" rx="74" ry="76" fill="none" stroke="#17324d" stroke-width="5"/>
+
+  <!-- Flügel: Progress-Keil (zeigt zur Brust) -->
+  <g clip-path="url(#wingL)">
+    <polygon points="60,160 196,312 60,464" fill="#000"/>
+    <polygon points="60,184 182,312 60,440" fill="#613915"/>
+    <polygon points="60,208 168,312 60,416" fill="#5bcefa"/>
+    <polygon points="60,232 154,312 60,392" fill="#f5a9b8"/>
+    <polygon points="60,256 140,312 60,368" fill="#fff"/>
+  </g>
+  <path d="M150 236 C112 262 104 336 136 388 C160 372 178 318 176 250 Z" fill="none" stroke="#17324d" stroke-width="6" stroke-linejoin="round"/>
+  <g clip-path="url(#wingR)">
+    <polygon points="452,160 316,312 452,464" fill="#000"/>
+    <polygon points="452,184 330,312 452,440" fill="#613915"/>
+    <polygon points="452,208 344,312 452,416" fill="#5bcefa"/>
+    <polygon points="452,232 358,312 452,392" fill="#f5a9b8"/>
+    <polygon points="452,256 372,312 452,368" fill="#fff"/>
+  </g>
+  <path d="M362 236 C400 262 408 336 376 388 C352 372 334 318 336 250 Z" fill="none" stroke="#17324d" stroke-width="6" stroke-linejoin="round"/>
+
+  <!-- Wochenraster als Sitzstange -->
+  <rect x="150" y="402" width="212" height="82" rx="14" fill="#fff" stroke="#17324d" stroke-width="8"/>
+  <path d="M154 416 a10 10 0 0 1 10 -10 h184 a10 10 0 0 1 10 10 v12 h-204 Z" fill="#0b4a7e"/>
+  <g fill="#e98f82"><rect x="170" y="440" width="28" height="14" rx="4"/><rect x="290" y="458" width="28" height="14" rx="4"/></g>
+  <g fill="#6faed4"><rect x="210" y="440" width="28" height="14" rx="4"/><rect x="170" y="458" width="28" height="14" rx="4"/><rect x="330" y="440" width="14" height="14" rx="4"/></g>
+  <g fill="#78b99a"><rect x="250" y="440" width="28" height="14" rx="4"/><rect x="250" y="458" width="28" height="14" rx="4"/></g>
+  <g fill="#dbe5ed"><rect x="290" y="440" width="28" height="14" rx="4"/><rect x="210" y="458" width="28" height="14" rx="4"/><rect x="330" y="458" width="14" height="14" rx="4"/></g>
+
+  <!-- Füsse -->
+  <g fill="#f2a93b" stroke="#17324d" stroke-width="4" stroke-linejoin="round">
+    <path d="M206 396 l-12 14 h36 l-12 -14 Z"/>
+    <path d="M294 396 l-12 14 h36 l-12 -14 Z"/>
+  </g>
+<style>
+.owl-head{transform-origin:256px 212px;animation:look 2.8s ease-in-out infinite}
+@keyframes look{0%,100%{transform:rotate(0deg)}25%,40%{transform:rotate(-9deg)}65%,80%{transform:rotate(9deg)}}
+@media(prefers-reduced-motion:reduce){.owl-head{animation:none}}
+</style>
+</svg>

@@ -1,2 +1,37 @@
 <!doctype html>
-<html lang="de-CH"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="referrer" content="no-referrer"><meta name="description" content="Zwei Blöcke, neun Angebote: Projektwoche gemeinsam planen."><title>Projektwoche · Gemeinsam entdecken</title><link rel="icon" href="./favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="./style.css"></head><body><header><a class="brand" href="#"><span class="mark">P<span>W</span></span><span>Projektwoche<small>Gemeinsam entdecken</small></span></a><div class="header-right"><span id="connection">Verbindung wird hergestellt</span><button id="switch-role" class="quiet">Lehrpersonen</button></div></header><main id="app" aria-live="polite"><h1>Deine Woche. Deine Entdeckungen.</h1><p>Die Angebote werden geladen …</p></main><div id="notice" role="status"></div><footer>Mo. + Di. &nbsp; / &nbsp; Mi. + Do. <span>Namen bleiben auf diesem Gerät.</span></footer><script type="module" src="./app.js"></script></body></html>
+<html lang="de-CH">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <meta
+      name="description"
+      content="Zwei Blöcke, neun Angebote: Projektwoche gemeinsam planen."
+    />
+    <title>Projektwoche · Wochenatelier</title>
+    <link rel="icon" href="./logo-eule.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <header>
+      <a class="brand" href="#"
+        ><img class="brand-owl" src="./logo-eule.svg" alt="Wochenatelier Eule" width="58" height="58"
+        ><span>Projektwoche<small>Wochenatelier</small></span></a
+      >
+      <div class="header-right">
+        <span id="connection">Verbindung wird hergestellt</span
+        ><button id="switch-role" class="quiet">Lehrpersonen</button>
+      </div>
+    </header>
+    <main id="app" aria-live="polite">
+      <section class="owl-intro" role="status"><img src="./eule-laedt.svg" width="180" height="180" alt="Die Eule schaut sich um" /><h1>Deine Projektwoche wartet.</h1><p>Die Eule schaut schon mal nach den Angeboten …</p></section>
+    </main>
+    <div id="busy-owl" hidden role="status"><img src="./eule-laedt.svg" width="60" height="60" alt="" /><span>Wird geladen …</span></div>
+    <div id="notice" role="status"></div>
+    <footer>
+      Mo. + Di. &nbsp; / &nbsp; Mi. + Do.
+      <span>Namen bleiben auf diesem Gerät.</span>
+    </footer>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
