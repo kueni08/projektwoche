@@ -54,7 +54,10 @@ function token(used) {
   }
 }
 async function loginLimit(request, env) {
-  const ip = request.headers.get("CF-Connecting-IP") || "local";
+  const ip =
+    request.headers.get("CF-Connecting-IP") ||
+    request.headers.get("X-Forwarded-For")?.split(",")[0]?.trim() ||
+    "local";
   const id = Array.from(await digest(env.ADMIN_HASH + ip), (n) =>
     n.toString(16).padStart(2, "0"),
   ).join("");

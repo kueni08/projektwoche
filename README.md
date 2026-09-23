@@ -1,6 +1,6 @@
 # Projektwoche
 
-Webanwendung für neun Angebote, zwei Blöcke (Mo./Di. und Mi./Do.) und ungefähr 100 Kinder. Oberfläche auf GitHub Pages, gemeinsame Daten auf Cloudflare Workers + D1 (EU-Jurisdiktion). Keine Installation auf Schul-PCs erforderlich.
+Webanwendung für neun Angebote, zwei Blöcke (Mo./Di. und Mi./Do.) und ungefähr 100 Kinder. Oberfläche auf GitHub Pages, gemeinsame Daten im kostenlosen Supabase-Projekt in Zürich. Keine Installation auf Schul-PCs erforderlich.
 
 ## Verwendung
 
@@ -41,8 +41,10 @@ npm test
 npm run dev
 ```
 
-Die Vorschau läuft unter `http://127.0.0.1:4173`. GitHub Actions testet Änderungen und veröffentlicht ausschliesslich `public/` auf GitHub Pages. Cloudflare stellt separat `backend/worker.js` und das importierte `public/model.js` bereit. Backendänderungen müssen ebenfalls veröffentlicht werden; der Pages-Workflow aktualisiert nur die Oberfläche.
+Die Vorschau läuft unter `http://127.0.0.1:4173`. GitHub Actions testet Änderungen und veröffentlicht `public/` auf GitHub Pages. Das Backend läuft als Supabase Edge Function mit Datenbanktabellen aus `supabase/migrations/`. Backendänderungen müssen separat an Supabase veröffentlicht werden; der Pages-Workflow aktualisiert nur die Oberfläche.
 
-Für eine eigene Installation: D1-Datenbank erstellen, `backend/schema.sql` ausführen, die ID in `wrangler.jsonc` anpassen, `ADMIN_HASH` als Secret hinterlegen, erlaubte Frontend-Origin konfigurieren und Worker veröffentlichen. `public/config.js` auf die tatsächliche Worker-URL setzen. Keine Zugangsdaten in Git committen. Der Code verwendet weder OpenAI Sites noch OpenAI-Anmeldungen.
+Für eine eigene Installation: Supabase-Projekt erstellen, `supabase/migrations/20260923010000_projektwoche.sql` ausführen, `ADMIN_HASH` als Edge Function Secret hinterlegen und `supabase/functions/projektwoche/` veröffentlichen (JWT-Prüfung für diese Funktion deaktivieren; die Funktion prüft ihre eigenen Codes). `public/config.js` auf die tatsächliche Funktions-URL setzen. Keine Zugangsdaten in Git committen. `backend/schema.sql` bleibt nur für lokale Tests erhalten.
+
+Der geplante GitHub-Funktionstest ruft alle zwei Tage den öffentlichen Projektstand aus der Datenbank ab. Bei Fehlern wird der Workflow rot. GitHub kann Zeitpläne nach 60 Tagen ohne Repository-Aktivität deaktivieren; der Test ist daher keine Garantie gegen eine spätere Pause im Supabase-Gratisplan.
 
 Die Tests prüfen die Verteilung mit 100 Kindern, Fixierungen, Kapazitäten, CSV-Rundläufe, Zugriffsschutz und konkurrierende Schreibzugriffe gegen SQLite. Vor realem Einsatz Angebote und Kapazitäten einrichten und einen Probedurchlauf durchführen.

@@ -1,0 +1,4 @@
+project_id = "projektwoche"
+
+[functions.projektwoche]
+verify_jwt = false

@@ -1,0 +1,24 @@
+name: Check project database
+
+on:
+  schedule:
+    - cron: "23 6 */2 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Load current public project state from database
+        run: |
+          code=$(curl --silent --show-error --connect-timeout 10 --max-time 30 --retry 2 \
+            -o /tmp/project-response -w '%{http_code}' \
+            'https://hsxymaeqillrcttegkha.supabase.co/functions/v1/projektwoche/public')
+          if [ "$code" != "200" ] || ! jq -e '.revision >= 0 and (.projects | length) == 9' /tmp/project-response >/dev/null; then
+            echo "::error::Projektwochen-Datenbank nicht erreichbar (HTTP $code). Supabase-Projektstatus prüfen."
+            exit 1
+          fi

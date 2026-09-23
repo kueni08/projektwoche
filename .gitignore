@@ -1,6 +1,2 @@
+dist/
 node_modules/
-.wrangler/
-.dev.vars
-.env*
-*-zugang.txt
-namensliste*
