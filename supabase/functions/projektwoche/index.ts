@@ -10,7 +10,7 @@ if (!url || !secret || !adminHash) throw Error("Projektwoche is not configured")
 const db = database(url, secret);
 Deno.serve((request: Request) => {
   const original = new URL(request.url);
-  const endpoint = original.pathname.replace(/^.*\/functions\/v1\/projektwoche/, "") || "/";
+  const endpoint = original.pathname.replace(/^.*\/projektwoche(?=\/|$)/, "") || "/";
   const routed = new Request(new URL(endpoint + original.search, original.origin), request);
   return worker.fetch(routed, {
     DB: db,
