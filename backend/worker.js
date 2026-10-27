@@ -45,45 +45,6 @@ async function admin(request, env) {
   for (let i = 0; i < 32; i++) diff |= a[i] ^ (b[i] || 0);
   if (diff) fail("Zugangscode nicht gültig.", 401);
 }
-function token(used) {
-  for (;;) {
-    const random = crypto.getRandomValues(new Uint32Array(1))[0];
-    if (random >= Math.floor(2 ** 32 / 9000) * 9000) continue;
-    const code = String(1000 + (random % 9000));
-    if (!used.has(code)) return code;
-  }
-}
-async function loginLimit(request, env) {
-  const ip =
-    request.headers.get("CF-Connecting-IP") ||
-    request.headers.get("X-Forwarded-For")?.split(",")[0]?.trim() ||
-    "local";
-  const id = Array.from(await digest(env.ADMIN_HASH + ip), (n) =>
-    n.toString(16).padStart(2, "0"),
-  ).join("");
-  const now = Date.now();
-  const row = await env.DB.prepare(
-    "SELECT attempts,expires FROM login_attempts WHERE id=?",
-  )
-    .bind(id)
-    .first();
-  if (row && row.expires > now && row.attempts >= 15)
-    fail(
-      "Zu viele falsche Codes aus diesem Netzwerk. Bitte nach 15 Minuten erneut versuchen.",
-      429,
-    );
-  return { id, now };
-}
-async function badLogin(env, limit) {
-  await env.DB.prepare("DELETE FROM login_attempts WHERE expires < ?")
-    .bind(limit.now)
-    .run();
-  await env.DB.prepare(
-    "INSERT INTO login_attempts(id,attempts,expires) VALUES(?,1,?) ON CONFLICT(id) DO UPDATE SET attempts=attempts+1",
-  )
-    .bind(limit.id, limit.now + 900000)
-    .run();
-}
 function text(v, max) {
   if (typeof v !== "string" || !v.trim() || v.length > max)
     fail("Text fehlt oder ist zu lang.");
@@ -104,18 +65,17 @@ function choices(v, s) {
   return v;
 }
 function mutate(s, b) {
+  delete s.accessKey;
+  delete s.open;
   switch (b.action) {
     case "reset":
-      s.accessKey = crypto.randomUUID().replaceAll("-", "");
       s.children = [];
       s.assignments = {};
       s.fixed = [];
       s.relations = [];
-      s.open = false;
       s.planStatus = "draft";
       break;
     case "projects": {
-      if (s.open) fail("Wahl zuerst schliessen, um Angebote zu ändern.");
       if (!Array.isArray(b.projects) || b.projects.length !== 9)
         fail("Genau neun Angebote sind erforderlich.");
       s.title = text(b.title, 100);
@@ -141,49 +101,26 @@ function mutate(s, b) {
       s.planStatus = "draft";
       break;
     }
-    case "children": {
-      if (
-        !Number.isInteger(b.count) ||
-        b.count < 1 ||
-        b.count > 200 ||
-        s.children.length + b.count > 200
-      )
+    case "roster": {
+      if (!Array.isArray(b.rows) || b.rows.length > 200)
         fail("Insgesamt höchstens 200 Kinder.");
-      const used = new Set(s.children.map((c) => c.code));
-      for (let i = 0; i < b.count; i++) {
-        const id = "K" + String(s.children.length + 1).padStart(3, "0");
-        const code = token(used);
-        used.add(code);
-        s.children.push({ id, code, choices: [], version: 0 });
-      }
-      s.planStatus = "draft";
-      break;
-    }
-    case "open":
-      if (b.open !== false) fail("Die Vorauswahl wird durch Lehrpersonen importiert.");
-      s.open = false;
-      break;
-    case "choices": {
-      if (!Array.isArray(b.rows) || b.rows.length !== s.children.length)
-        fail("Die Datei muss genau eine Zeile pro Kind enthalten.");
-      const ids = new Set(s.children.map((c) => c.id));
       const incoming = new Map();
       for (const row of b.rows) {
-        if (!row || !ids.has(row.id) || incoming.has(row.id) || !Array.isArray(row.choices))
-          fail("Kennungen fehlen, sind doppelt oder unbekannt.");
+        if (!row || typeof row.id !== "string" ||
+          !/^[A-Z0-9ÄÖÜ_-]{1,20}$/.test(row.id) ||
+          incoming.has(row.id) || !Array.isArray(row.choices))
+          fail("Kürzel fehlen, sind doppelt oder ungültig.");
         incoming.set(row.id, row.choices.length ? choices(row.choices, s) : []);
       }
-      for (const child of s.children) {
-        const next = incoming.get(child.id);
-        if (JSON.stringify(child.choices) !== JSON.stringify(next)) child.version++;
-        child.choices = next;
-      }
-      s.open = false;
+      s.children = [...incoming].map(([id, selected]) => ({ id, choices: selected }));
+      const ids = new Set(incoming.keys());
+      s.assignments = Object.fromEntries(Object.entries(s.assignments).filter(([id]) => ids.has(id)));
+      s.fixed = s.fixed.filter((id) => ids.has(id));
+      s.relations = (s.relations || []).filter((r) => ids.has(r.a) && ids.has(r.b));
       s.planStatus = "draft";
       break;
     }
     case "plan": {
-      if (s.open) fail("Wahl vor der Gruppenplanung schliessen.");
       if (
         !b.plan ||
         typeof b.plan !== "object" ||
@@ -235,7 +172,6 @@ function mutate(s, b) {
       break;
     }
     case "finalize":
-      if (s.open) fail("Wahl zuerst schliessen.");
       if (!s.children.length) fail("Noch keine Kinder angelegt.");
       {
         const c = validatePlan(s, s.assignments, {
@@ -269,17 +205,13 @@ export default {
           response = json({
             title: s.title,
             projects: s.projects,
-            open: s.open,
             revision,
           });
         } else if (path === "/admin" && request.method === "GET") {
           await admin(request, env);
           response = json(await read(env.DB));
-        } else if (
-          request.method === "POST" &&
-          ["/admin", "/choice", "/me"].includes(path)
-        ) {
-          if (path === "/admin") await admin(request, env);
+        } else if (request.method === "POST" && path === "/admin") {
+          await admin(request, env);
           if (
             !request.headers.get("Content-Type")?.startsWith("application/json")
           )
@@ -313,61 +245,18 @@ export default {
           }
           if (!b || typeof b !== "object" || Array.isArray(b))
             fail("Ungültige Anfrage.");
-          const limit =
-            path === "/admin" ? null : await loginLimit(request, env);
           for (let attempt = 0; attempt < 12; attempt++) {
             const { state: s, revision } = await read(env.DB);
-            let child;
-            if (path === "/admin") {
-              if (b.revision !== revision)
-                fail(
-                  "Inzwischen wurde etwas geändert. Bitte den aktuellen Stand laden und deine Änderung erneut prüfen.",
-                  409,
-                );
-              mutate(s, b);
-            } else {
-              if (
-                !s.accessKey ||
-                request.headers.get("X-Project-Key") !== s.accessKey
-              ) {
-                await badLogin(env, limit);
-                fail("Bitte den Kinderlink deiner Lehrperson öffnen.", 401);
-              }
-              const code = (request.headers.get("Authorization") || "")
-                .replace(/^Bearer /, "")
-                .replace(/[\s-]/g, "")
-                .toUpperCase();
-              child = s.children.find((c) => c.code === code);
-              if (!/^[1-9][0-9]{3}$/.test(code) || !child) {
-                await badLogin(env, limit);
-                fail("Kindercode nicht gültig.", 401);
-              }
-              if (path === "/me") {
-                response = json({
-                  id: child.id,
-                  choices: child.choices,
-                  version: child.version,
-                  assignment:
-                    s.planStatus === "final" ? s.assignments[child.id] : null,
-                });
-                break;
-              }
-              fail("Die Vorauswahl wird von Lehrpersonen importiert.", 403);
-            }
+            if (b.revision !== revision)
+              fail("Inzwischen wurde etwas geändert. Bitte den aktuellen Stand laden und deine Änderung erneut prüfen.", 409);
+            mutate(s, b);
             const result = await env.DB.prepare(
               "UPDATE planning SET payload=?,revision=revision+1 WHERE id=1 AND revision=?",
             )
               .bind(JSON.stringify(s), revision)
               .run();
             if (result.meta.changes) {
-              response =
-                path === "/admin"
-                  ? json({ state: s, revision: revision + 1 })
-                  : json({
-                      id: child.id,
-                      choices: child.choices,
-                      version: child.version,
-                    });
+              response = json({ state: s, revision: revision + 1 });
               break;
             }
             await new Promise((resolve) =>
@@ -407,7 +296,7 @@ export default {
     h.set("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     h.set(
       "Access-Control-Allow-Headers",
-      "Authorization, Content-Type, X-Project-Key",
+      "Authorization, Content-Type",
     );
     h.set("Access-Control-Max-Age", "600");
     return new Response(response.body, { status: response.status, headers: h });

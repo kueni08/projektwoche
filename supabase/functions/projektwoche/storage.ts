@@ -25,10 +25,6 @@ export function database(url: string, secret: string) {
             const row = rows?.[0];
             return row ? { revision: Number(row.revision), payload: JSON.stringify(row.payload) } : null;
           }
-          if (sql.startsWith("SELECT attempts,expires FROM login_attempts")) {
-            const rows = await call("project_login_attempts?select=attempts,expires&id=eq." + encodeURIComponent(String(args[0])) + "&limit=1");
-            return rows?.[0] || null;
-          }
           throw Error("Unsupported database read");
         },
         async run() {
@@ -39,11 +35,6 @@ export function database(url: string, secret: string) {
           if (sql.startsWith("UPDATE planning SET payload")) {
             const changed = await call("rpc/project_planning_cas", "POST", { p_expected: args[1], p_payload: JSON.parse(String(args[0])) });
             return { meta: { changes: changed ? 1 : 0 } };
-          }
-          if (sql.startsWith("DELETE FROM login_attempts")) return { meta: { changes: 0 } };
-          if (sql.startsWith("INSERT INTO login_attempts")) {
-            await call("rpc/project_bad_login", "POST", { p_id: args[0], p_now: Number(args[2]) - 900000 });
-            return { meta: { changes: 1 } };
           }
           throw Error("Unsupported database write");
         },

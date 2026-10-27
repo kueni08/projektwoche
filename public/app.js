@@ -1,7 +1,6 @@
 import { API_URL } from "./config.js";
 import { allocate, validatePlan } from "./model.js";
-import { exportCodes, importCodeNames } from "./csv.js";
-import { makeChoiceTemplate, parseChoiceTemplate } from "./excel.js";
+import { makeRosterTemplate, parseRosterTemplate } from "./excel.js";
 const $ = (s) => document.querySelector(s),
   esc = (s) =>
     String(s ?? "").replace(
@@ -17,11 +16,9 @@ const $ = (s) => document.querySelector(s),
     );
 let publicData = null,
   snapshot = null,
-  role = "child",
+  role = "public",
   tab = "overview",
   adminKey = "",
-  childCode = "",
-  child = null,
   importDraft = null,
   dirty = false,
   loading = false,
@@ -29,17 +26,7 @@ let publicData = null,
   timer;
 const namesKey = "projektwoche-names:" + API_URL;
 const introReady = new Promise((resolve) => setTimeout(resolve, 850));
-let projectKey =
-  new URLSearchParams(location.hash.slice(1)).get("klasse") || "";
-try {
-  if (projectKey)
-    sessionStorage.setItem("projektwoche-link:" + API_URL, projectKey);
-  else
-    projectKey = sessionStorage.getItem("projektwoche-link:" + API_URL) || "";
-} catch {}
 let pendingWrites = 0;
-const childLink = () =>
-  location.href.split("#")[0] + "#klasse=" + state().accessKey;
 try {
   names = JSON.parse(localStorage.getItem(namesKey) || "{}");
 } catch {
@@ -64,9 +51,6 @@ async function api(path, { body, key } = {}) {
       headers: {
         ...(body ? { "Content-Type": "application/json" } : {}),
         ...(key ? { Authorization: "Bearer " + key } : {}),
-        ...(["/me", "/choice"].includes(path)
-          ? { "X-Project-Key": projectKey }
-          : {}),
       },
       signal: AbortSignal.timeout(15000),
       body: body ? JSON.stringify(body) : undefined,
@@ -113,7 +97,6 @@ async function refresh() {
       const changed = data.revision !== publicData?.revision;
       publicData = data;
       if (changed && !dirty && !editing) {
-        if (child && childCode) child = await api("/me", { body: {}, key: childCode });
         render();
       }
     }
@@ -138,53 +121,26 @@ function render() {
   if (role === "admin") {
     if (!adminKey || !snapshot) renderAdminLogin();
     else renderAdmin();
-  } else renderChild();
+  } else renderPublic();
 }
 $("#switch-role").onclick = () => {
   if (dirty && !confirm("Ungespeicherten Entwurf verwerfen?")) return;
   dirty = false;
-  role = role === "child" ? "admin" : "child";
+  role = role === "public" ? "admin" : "public";
   $("#switch-role").textContent =
-    role === "child" ? "Lehrpersonen" : "Zur Kinderansicht";
+    role === "public" ? "Lehrpersonen" : "Zu den Angeboten";
   render();
   refresh();
 };
-function renderChild() {
+function renderPublic() {
   if (!publicData) {
     renderError("Die Angebote konnten noch nicht geladen werden.");
     return;
   }
   const p = publicData;
   $("#app").innerHTML =
-    `<section class="intro"><div><span class="eyebrow">${esc(p.title)}</span><h1>Deine Projektwoche</h1><p>Du besuchst zwei verschiedene Posten – jeweils zwei Tage lang. Die Lehrpersonen erfassen eure Wünsche und teilen die Gruppen ein.</p></div>${blocks()}</section>
- ${!child ? `<form id="child-login" class="panel"><div class="row between"><div><h2>Dein persönlicher Code</h2><p class="small">Öffne den Kinderlink deiner Lehrperson und gib deinen vierstelligen Code ein. Hier siehst du später deine zwei Posten.</p></div><div class="row"><label class="field">Kindercode<input name="code" required autocomplete="off" spellcheck="false" placeholder="1234" inputmode="numeric" pattern="[1-9][0-9]{3}" minlength="4" maxlength="4"></label><button>Meine Posten ansehen</button></div></div></form>` : `<div class="panel row between"><div>Angemeldet als <strong>${esc(child.id)}</strong></div><button id="child-logout" class="quiet">Abmelden</button></div>`}
- ${child && !child.assignment ? '<div class="warning">Die Gruppeneinteilung wird vorbereitet. Schau später wieder vorbei.</div>' : ""}
- ${child?.assignment ? `<div class="success"><strong>Deine zwei Posten</strong><p>Mo. + Di.: ${esc(p.projects.find((x) => x.id === child.assignment[0])?.title)}<br>Mi. + Do.: ${esc(p.projects.find((x) => x.id === child.assignment[1])?.title)}</p></div>` : ""}
+    `<section class="intro"><div><span class="eyebrow">${esc(p.title)}</span><h1>Unsere neun Posten</h1><p>Jedes Kind besucht zwei verschiedene Posten – jeweils zwei Tage lang. Die Lehrpersonen erfassen die Befragung und erstellen die Gruppeneinteilung.</p></div>${blocks()}</section>
  <div class="grid">${p.projects.map((offer, i) => `<article class="card" data-card="${offer.id}"><span class="number">${String(i + 1).padStart(2, "0")}</span><h3>${esc(offer.title)}</h3><p>${esc(offer.description)}</p></article>`).join("")}</div>`;
-  $("#child-login")?.addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const button = e.target.querySelector("button");
-    button.disabled = true;
-    try {
-      childCode = new FormData(e.target)
-        .get("code")
-        .replace(/[\s-]/g, "")
-        .toUpperCase();
-      child = await api("/me", { body: {}, key: childCode });
-      dirty = false;
-      render();
-    } catch (e) {
-      notice(e.message);
-    } finally {
-      button.disabled = false;
-    }
-  });
-  $("#child-logout")?.addEventListener("click", () => {
-    child = null;
-    childCode = "";
-    dirty = false;
-    render();
-  });
 }
 function renderAdminLogin() {
   $("#app").innerHTML =
@@ -194,7 +150,6 @@ function renderAdminLogin() {
     const key = new FormData(e.target).get("key").trim();
     try {
       snapshot = await api("/admin", { key });
-      projectKey = snapshot.state.accessKey;
       adminKey = key;
       tab = "overview";
       render();
@@ -232,7 +187,7 @@ function renderAdmin() {
  <nav class="no-print">${[
    ["overview", "Übersicht"],
    ["projects", "Angebote"],
-   ["children", "Kinder & Namen"],
+   ["children", "Kinderliste"],
    ["choices", "Wahlübersicht"],
    ["plan", "Gruppenplanung"],
    ["print", "Drucken"],
@@ -277,8 +232,7 @@ function renderAdmin() {
   };
   if (tab === "overview") {
     $("#content").innerHTML =
-      `<div class="stats"><div class="stat"><strong>${s.children.length}</strong>Kinder angelegt</div><div class="stat"><strong>${answered} / ${s.children.length}</strong>Vorauswahlen erfasst</div><div class="stat"><strong>${Object.values(s.assignments).filter((p) => p?.every(Boolean)).length}</strong>vollständig zugeteilt</div></div><div class="panel"><h2>So entsteht eure Projektwoche</h2><ol><li><p>Unter «Angebote» die neun Posten beschreiben und Plätze festlegen.</p></li><li><p>Kinder anlegen und die vierstelligen Codes zuordnen.</p></li><li><p>Unter «Wahlübersicht» die Excel-Vorlage herunterladen, die Kinder befragen und die ausgefüllte Datei importieren.</p></li><li><p>Gruppenvorgaben ergänzen, Verteilung vorschlagen lassen und prüfen.</p></li><li><p>Den Plan freigeben und die Gruppenlisten drucken.</p></li></ol>${s.open ? '<button id="toggle-open">Alte Kinderwahl schliessen</button>' : ''} <span class="small">${s.planStatus === "final" ? "Plan freigegeben" : "Plan ist ein Entwurf"}</span></div>`;
-    if (s.open) $("#toggle-open").onclick = () => save({ action: "open", open: false });
+      `<div class="stats"><div class="stat"><strong>${s.children.length}</strong>Kinder erfasst</div><div class="stat"><strong>${answered} / ${s.children.length}</strong>Vorauswahlen erfasst</div><div class="stat"><strong>${Object.values(s.assignments).filter((p) => p?.every(Boolean)).length}</strong>vollständig zugeteilt</div></div><div class="panel"><h2>So entsteht eure Projektwoche</h2><ol><li><p>Unter «Angebote» die neun Posten und Plätze prüfen.</p></li><li><p>Unter «Kinderliste» die Excel-Liste herunterladen, Kürzel und Namen eintragen und die Kinder befragen.</p></li><li><p>In der Excel-Liste mindestens vier Posten pro befragtem Kind markieren und die Liste importieren.</p></li><li><p>Gruppenvorgaben ergänzen, Verteilung vorschlagen lassen und prüfen.</p></li><li><p>Den Plan freigeben und die Gruppenlisten drucken.</p></li></ol><span class="small">${s.planStatus === "final" ? "Plan freigegeben" : "Plan ist ein Entwurf"}</span></div>`;
   }
   if (tab === "projects") renderProjects();
   if (tab === "children") renderChildren();
@@ -289,7 +243,7 @@ function renderAdmin() {
 function renderProjects() {
   const s = state();
   $("#content").innerHTML =
-    `${s.open ? '<div class="warning">Die Wahl ist geöffnet. Zum Bearbeiten der Angebote zuerst die Wahl in der Übersicht schliessen.</div>' : ""}<form id="projects-form"><div class="panel"><label class="field">Titel der Projektwoche<input name="title" value="${esc(s.title)}" maxlength="100" required></label><p class="small">0 Plätze bedeutet: Das Angebot findet in diesem Block nicht statt.</p></div><div class="grid">${s.projects.map((p) => `<article class="card"><span class="number">${p.id.padStart(2, "0")}</span><label class="field">Name des Angebots<input name="title-${p.id}" value="${esc(p.title)}" maxlength="100" required></label><label class="field">Beschreibung<textarea name="desc-${p.id}" maxlength="2000" required>${esc(p.description)}</textarea></label><div class="row"><label class="field">Plätze Mo. + Di.<input type="number" name="a-${p.id}" value="${p.capacity[0]}" min="0" max="200" required></label><label class="field">Plätze Mi. + Do.<input type="number" name="b-${p.id}" value="${p.capacity[1]}" min="0" max="200" required></label></div></article>`).join("")}</div><div class="savebar"><span>Änderungen gelten auf allen PCs.</span><button ${s.open ? "disabled" : ""}>Angebote speichern</button></div></form>`;
+    `<form id="projects-form"><div class="panel"><label class="field">Titel der Projektwoche<input name="title" value="${esc(s.title)}" maxlength="100" required></label><p class="small">0 Plätze bedeutet: Das Angebot findet in diesem Block nicht statt.</p></div><div class="grid">${s.projects.map((p) => `<article class="card"><span class="number">${p.id.padStart(2, "0")}</span><label class="field">Name des Angebots<input name="title-${p.id}" value="${esc(p.title)}" maxlength="100" required></label><label class="field">Beschreibung<textarea name="desc-${p.id}" maxlength="2000" required>${esc(p.description)}</textarea></label><div class="row"><label class="field">Plätze Mo. + Di.<input type="number" name="a-${p.id}" value="${p.capacity[0]}" min="0" max="200" required></label><label class="field">Plätze Mi. + Do.<input type="number" name="b-${p.id}" value="${p.capacity[1]}" min="0" max="200" required></label></div></article>`).join("")}</div><div class="savebar"><span>Änderungen gelten auf allen PCs.</span><button>Angebote speichern</button></div></form>`;
   $("#projects-form").oninput = () => (dirty = true);
   $("#projects-form").onsubmit = (e) => {
     e.preventDefault();
@@ -309,79 +263,35 @@ function renderProjects() {
 function renderChildren() {
   const s = state();
   $("#content").innerHTML =
-    `<div class="panel"><h2>Kinder anlegen</h2><p>Jedes Kind erhält eine Kennung und einen vierstelligen Code für die spätere Ansicht des Wochenplans. Die Namensspalte bleibt ausschliesslich auf diesem Gerät.</p><form id="add-children" class="row"><label class="field">Anzahl neuer Kinder<input type="number" name="count" min="1" max="${200 - s.children.length}" value="${s.children.length ? 1 : 100}" required></label><button ${s.children.length >= 200 ? "disabled" : ""}>Codes erstellen</button></form></div><div class="panel"><div class="row between"><h2>Lokale Namensliste</h2><div class="row"><button id="export-names" class="quiet">Verschlüsselt exportieren</button><button id="import-names" class="quiet">Importieren</button><button id="forget-names" class="danger">Namen hier entfernen</button></div></div><p class="small">Namen werden nur im Browser dieses PCs gespeichert. Für einen anderen PC die verschlüsselte Datei exportieren und dort importieren. Auf gemeinsam genutzten PCs nach Gebrauch entfernen.</p><div class="table-wrap"><table><thead><tr><th>Kennung</th><th>Name · nur lokal</th><th>Kindercode</th><th>Vorauswahl</th></tr></thead><tbody>${s.children.map((c) => `<tr><td>${c.id}</td><td><input data-name="${c.id}" aria-label="Lokaler Name für ${c.id}" value="${esc(names[c.id] || "")}" maxlength="100"></td><td class="code">${c.code.match(/.{1,4}/g).join("-")}</td><td>${c.choices.length ? "Erfasst" : "Fehlt"}</td></tr>`).join("")}</tbody></table></div></div>`;
-  $("#add-children").onsubmit = (e) => {
-    e.preventDefault();
-    save({
-      action: "children",
-      count: Number(new FormData(e.target).get("count")),
-    });
+    `<div class="panel"><h2>Kinderliste und Vorauswahl</h2><p>Eine Excel-Datei enthält pro Kind Kürzel, Name und die angekreuzten Angebote. Lade die aktuelle Liste herunter, ergänze sie und importiere sie wieder. Der Import ersetzt die gemeinsame Kinderliste und die Wahlen. Namen bleiben ausschliesslich auf diesem Gerät.</p><div class="row"><button id="download-roster">Excel-Liste herunterladen</button><label class="button quiet">Excel-Liste importieren<input id="import-roster" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style="display:none"></label></div><div id="import-preview"></div></div><div class="panel"><div class="row between"><h2>Aktuelle Liste · ${s.children.length} Kinder</h2><button id="forget-names" class="quiet">Lokale Namen hier entfernen</button></div><p class="small">Online werden nur Kürzel und Wahlen gespeichert. Für Namen auf einem anderen PC die Excel-Liste dort importieren.</p><div class="table-wrap"><table><thead><tr><th>Kürzel</th><th>Name · nur lokal</th><th>Gewählte Posten</th><th>Status</th></tr></thead><tbody>${s.children.map((c) => `<tr><td>${esc(c.id)}</td><td>${esc(names[c.id] || "—")}</td><td>${c.choices.map((id) => esc(s.projects.find((p) => p.id === id)?.title || id)).join(", ") || "—"}</td><td>${c.choices.length >= 4 ? "Erfasst" : "Offen"}</td></tr>`).join("")}</tbody></table></div></div>`;
+  $("#download-roster").onclick = async () => {
+    try { download("projektwoche-kinderliste.xlsx", await makeRosterTemplate(s, names), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"); }
+    catch (e) { notice("Excel-Liste konnte nicht erstellt werden: " + e.message); }
   };
-  document.querySelectorAll("[data-name]").forEach(
-    (input) =>
-      (input.onchange = () => {
-        names[input.dataset.name] = input.value.trim();
-        try {
-          localStorage.setItem(namesKey, JSON.stringify(names));
-          notice("Name lokal gespeichert.");
-        } catch {
-          notice("Lokales Speichern nicht möglich. Bitte Namen exportieren.");
-        }
-      }),
-  );
-  const controls = document.createElement("div");
-  controls.className = "panel row";
-  controls.innerHTML =
-    '<button id="export-csv">Codeliste für Excel exportieren</button><label class="button quiet">Ergänzte CSV importieren<input id="import-csv" type="file" accept=".csv" style="display:none"></label><button id="print-codes" class="quiet">Codezettel drucken</button><p class="small">Die CSV enthält Kennung, geheimen Wahlcode und eine Namensspalte. Namen in Excel ergänzen, als CSV UTF-8 speichern und hier lokal importieren. Diese Datei vertraulich aufbewahren.</p>';
-  $("#content").prepend(controls);
-  const linkPanel = document.createElement("div");
-  linkPanel.className = "panel";
-  linkPanel.innerHTML = `<h2>Kinderlink</h2><p>Über diesen Link und den vierstelligen Code können Kinder nach der Freigabe ihre zwei Posten ansehen.</p><label class="field">Link zur Kinderansicht<input readonly id="child-link" value="${esc(childLink())}"></label><button id="copy-child-link" class="quiet">Kinderlink kopieren</button>`;
-  $("#content").prepend(linkPanel);
-  $("#copy-child-link").onclick = async () => {
+  $("#import-roster").onchange = async (event) => {
     try {
-      await navigator.clipboard.writeText(childLink());
-      notice("Kinderlink kopiert.");
-    } catch {
-      $("#child-link").select();
-      notice("Bitte den markierten Link kopieren.");
-    }
-  };
-  $("#export-csv").onclick = () =>
-    download(
-      "projektwoche-codeliste.csv",
-      exportCodes(s.children, names),
-      "text/csv;charset=utf-8",
-    );
-  $("#import-csv").onchange = async (e) => {
-    try {
-      const file = e.target.files[0];
+      const file = event.target.files[0];
       if (!file) return;
-      if (file.size > 200000) throw Error("Datei zu gross.");
-      const imported = importCodeNames(await file.text(), s.children);
-      const merged = { ...names, ...imported };
-      localStorage.setItem(namesKey, JSON.stringify(merged));
-      names = merged;
-      render();
-      notice(Object.keys(imported).length + " Namen lokal importiert.");
-    } catch (e) {
-      notice(e.message);
-    }
+      if (file.size > 2_000_000) throw Error("Excel-Datei ist zu gross.");
+      const parsed = await parseRosterTemplate(await file.arrayBuffer(), s);
+      importDraft = { ...parsed, revision: snapshot.revision };
+      $("#import-preview").innerHTML = `<div class="success"><strong>Import geprüft</strong><p>${parsed.rows.length} Kinder · ${parsed.answered} mit mindestens vier Wünschen · ${parsed.rows.length - parsed.answered} noch offen. Beim Speichern wird die bisherige Kinderliste ersetzt.</p><button id="save-import">Kinderliste und Wahlen speichern</button></div>`;
+      $("#save-import").onclick = async () => {
+        const draft = importDraft;
+        if (!draft || snapshot.revision !== draft.revision) { notice("Der gemeinsame Stand hat sich geändert. Bitte die Datei erneut auswählen."); return; }
+        const result = await save({ action: "roster", rows: draft.rows });
+        if (result) {
+          names = draft.names;
+          try { localStorage.setItem(namesKey, JSON.stringify(names)); }
+          catch { notice("Wahlen gespeichert, aber Namen konnten lokal nicht gesichert werden. Bitte die Excel-Liste aufbewahren."); }
+          importDraft = null;
+          render();
+        }
+      };
+    } catch (e) { importDraft = null; $("#import-preview").innerHTML = ""; notice(e.message); }
   };
-  $("#print-codes").onclick = () => {
-    tab = "print";
-    render();
-    $("#print-type").value = "codes";
-    $("#print-type").dispatchEvent(new Event("change"));
-  };
-  $("#export-names").onclick = () => nameTransfer("export");
-  $("#import-names").onclick = () => nameTransfer("import");
   $("#forget-names").onclick = () => {
-    if (
-      confirm(
-        "Alle lokal gespeicherten Namen auf diesem PC entfernen? Eine exportierte Sicherung bleibt erhalten.",
-      )
-    ) {
+    if (confirm("Alle lokal gespeicherten Namen auf diesem PC entfernen?")) {
       names = {};
       localStorage.removeItem(namesKey);
       render();
@@ -391,38 +301,13 @@ function renderChildren() {
 function renderChoices() {
   const s = state();
   $("#content").innerHTML =
-    `<div class="panel"><h2>Vorauswahl aus Excel</h2><p>Vorlage herunterladen, nach der Befragung pro Kind mindestens vier Angebote mit x markieren und die Datei hier prüfen. Die Namen werden nur lokal gespeichert; online gehen ausschliesslich Kennungen und Wahlen.</p><div class="row"><button id="download-template" ${!s.children.length ? "disabled" : ""}>Excel-Vorlage herunterladen</button><label class="button quiet">Ausgefüllte Excel auswählen<input id="import-choices" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style="display:none" ${!s.children.length ? "disabled" : ""}></label></div><div id="import-preview"></div></div><div class="panel"><h2>Wer hat was gewählt?</h2><p class="small">Die Häkchen zeigen gleichwertige Wünsche. Namen erscheinen nur, wenn sie auf diesem PC hinterlegt sind.</p><div class="table-wrap"><table><thead><tr><th>Kind</th>${s.projects.map((p) => `<th class="center" title="${esc(p.title)}">${esc(p.title)}</th>`).join("")}<th>Status</th></tr></thead><tbody>${s.children.map((c) => `<tr><td>${esc(name(c.id))}<br><span class="small">${c.id}</span></td>${s.projects.map((p) => `<td class="center">${c.choices.includes(p.id) ? "✓" : "—"}</td>`).join("")}<td>${c.choices.length >= 4 ? "Erfasst" : "Fehlt"}</td></tr>`).join("")}</tbody></table></div></div>`;
-  $("#download-template").onclick = async () => {
-    try { download("projektwoche-vorauswahl.xlsx", await makeChoiceTemplate(s, names), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"); }
-    catch (e) { notice("Vorlage konnte nicht erstellt werden: " + e.message); }
-  };
-  $("#import-choices").onchange = async (event) => {
-    try {
-      const file = event.target.files[0];
-      if (!file) return;
-      if (file.size > 2_000_000) throw Error("Excel-Datei ist zu gross.");
-      const parsed = await parseChoiceTemplate(await file.arrayBuffer(), s);
-      importDraft = { ...parsed, revision: snapshot.revision };
-      $("#import-preview").innerHTML = `<div class="success"><strong>Import geprüft</strong><p>${parsed.rows.length} Kinder enthalten · ${parsed.answered} mit mindestens vier Wünschen · ${parsed.rows.length - parsed.answered} ohne Vorauswahl. ${Object.keys(parsed.names).length} Namen werden nur auf diesem Gerät ergänzt.</p><button id="save-import">Vorauswahl für alle Kinder speichern</button></div>`;
-      $("#save-import").onclick = async () => {
-        if (snapshot.revision !== importDraft.revision) { notice("Der gemeinsame Stand hat sich geändert. Bitte die Excel-Datei erneut auswählen."); return; }
-        const result = await save({ action: "choices", rows: importDraft.rows });
-        if (result) {
-          names = { ...names, ...importDraft.names };
-          try { localStorage.setItem(namesKey, JSON.stringify(names)); }
-          catch { notice("Wahlen gespeichert, aber Namen konnten lokal nicht gesichert werden. Bitte Namensliste exportieren."); }
-          importDraft = null;
-          render();
-        }
-      };
-    } catch (e) { importDraft = null; $("#import-preview").innerHTML = ""; notice(e.message); }
-  };
+    `<div class="panel"><h2>Wahlübersicht</h2><p class="small">Die Häkchen zeigen gleichwertige Wünsche. Namen erscheinen nur, wenn die Kinderliste auf diesem PC importiert wurde.</p><div class="table-wrap"><table><thead><tr><th>Kind</th>${s.projects.map((p) => `<th class="center" title="${esc(p.title)}">${esc(p.title)}</th>`).join("")}<th>Status</th></tr></thead><tbody>${s.children.map((c) => `<tr><td>${esc(name(c.id))}<br><span class="small">${esc(c.id)}</span></td>${s.projects.map((p) => `<td class="center">${c.choices.includes(p.id) ? "✓" : "—"}</td>`).join("")}<td>${c.choices.length >= 4 ? "Erfasst" : "Offen"}</td></tr>`).join("")}</tbody></table></div></div>`;
 }
 function renderPlan() {
   const s = state(),
     check = validatePlan(s, s.assignments, { allowOutside: true });
   $("#content").innerHTML =
-    `<div class="panel"><div class="row between"><div><h2>Gruppen für zwei Blöcke</h2><p class="small">Der Vorschlag berücksichtigt die Wünsche und gleicht Gruppengrössen aus. Fixierte Kinder bleiben an ihrem Platz.</p></div><button id="generate" ${s.open || !s.children.length ? "disabled" : ""}>Verteilung vorschlagen</button></div>${s.open ? '<div class="warning">Zuerst die Wahl schliessen.</div>' : ""}<div class="grid">${s.projects.map((p, i) => `<div><h3>${esc(p.title)}</h3><p class="small">Mo. + Di. <strong>${check.counts[i][0]} / ${p.capacity[0]}</strong><br>Mi. + Do. <strong>${check.counts[i][1]} / ${p.capacity[1]}</strong></p></div>`).join("")}</div></div><div class="panel"><div class="table-wrap"><table><thead><tr><th>Kind</th><th>Mo. + Di.</th><th>Mi. + Do.</th><th>Fixieren</th></tr></thead><tbody>${s.children.map((c) => `<tr><td>${esc(name(c.id))}<br><span class="small">${c.id}</span></td>${[0, 1].map((b) => `<td><select data-assign="${c.id}" data-block="${b}" aria-label="${c.id}, Block ${b + 1}" ${s.fixed.includes(c.id) ? "disabled" : ""}><option value="">Noch offen</option>${s.projects.map((p) => `<option value="${p.id}" ${s.assignments[c.id]?.[b] === p.id ? "selected" : ""}>${esc(p.title)}${c.choices.includes(p.id) ? " ✓" : " · nicht gewählt"}</option>`).join("")}</select></td>`).join("")}<td><input type="checkbox" data-fix="${c.id}" aria-label="${c.id} fixieren" ${s.fixed.includes(c.id) ? "checked" : ""}></td></tr>`).join("")}</tbody></table></div><div id="plan-feedback"></div><label class="choose" style="margin:20px 0"><input type="checkbox" id="allow-outside">Ich bestätige Zuteilungen ausserhalb der gewählten Angebote.</label><div class="row"><button id="save-plan" ${s.open ? "disabled" : ""}>Änderungen speichern</button><button id="finalize" class="quiet" ${s.open ? "disabled" : ""}>Plan freigeben</button></div><p class="small">Freigegebene Posten sehen die Kinder nach der Anmeldung. Neue Änderungen machen den Plan wieder zum Entwurf.</p></div>`;
+    `<div class="panel"><div class="row between"><div><h2>Gruppen für zwei Blöcke</h2><p class="small">Der Vorschlag berücksichtigt die Wünsche und gleicht Gruppengrössen aus. Fixierte Kinder bleiben an ihrem Platz.</p></div><button id="generate" ${!s.children.length ? "disabled" : ""}>Verteilung vorschlagen</button></div><div class="grid">${s.projects.map((p, i) => `<div><h3>${esc(p.title)}</h3><p class="small">Mo. + Di. <strong>${check.counts[i][0]} / ${p.capacity[0]}</strong><br>Mi. + Do. <strong>${check.counts[i][1]} / ${p.capacity[1]}</strong></p></div>`).join("")}</div></div><div class="panel"><div class="table-wrap"><table><thead><tr><th>Kind</th><th>Mo. + Di.</th><th>Mi. + Do.</th><th>Fixieren</th></tr></thead><tbody>${s.children.map((c) => `<tr><td>${esc(name(c.id))}<br><span class="small">${c.id}</span></td>${[0, 1].map((b) => `<td><select data-assign="${c.id}" data-block="${b}" aria-label="${c.id}, Block ${b + 1}" ${s.fixed.includes(c.id) ? "disabled" : ""}><option value="">Noch offen</option>${s.projects.map((p) => `<option value="${p.id}" ${s.assignments[c.id]?.[b] === p.id ? "selected" : ""}>${esc(p.title)}${c.choices.includes(p.id) ? " ✓" : " · nicht gewählt"}</option>`).join("")}</select></td>`).join("")}<td><input type="checkbox" data-fix="${c.id}" aria-label="${c.id} fixieren" ${s.fixed.includes(c.id) ? "checked" : ""}></td></tr>`).join("")}</tbody></table></div><div id="plan-feedback"></div><label class="choose" style="margin:20px 0"><input type="checkbox" id="allow-outside">Ich bestätige Zuteilungen ausserhalb der gewählten Angebote.</label><div class="row"><button id="save-plan">Änderungen speichern</button><button id="finalize" class="quiet" >Plan freigeben</button></div><p class="small">Neue Änderungen machen den Plan wieder zum Entwurf. Die Einteilung kann unter «Drucken» ausgegeben werden.</p></div>`;
   const rules = s.relations || [];
   const childOptions = s.children.map((c) => `<option value="${esc(c.id)}">${esc(name(c.id))} (${esc(c.id)})</option>`).join("");
   $("#content").insertAdjacentHTML("afterbegin",
@@ -527,7 +412,7 @@ function renderPlan() {
 function renderPrint() {
   const s = state();
   $("#content").innerHTML =
-    `<div class="panel no-print"><h2>Druckübersichten</h2><p>Die Vorschau ergänzt Namen ausschliesslich auf diesem PC. Ohne Namensliste werden die Kennungen gedruckt.</p><div class="row"><label class="field">Ansicht<select id="print-type"><option value="groups">Gruppenlisten je Posten und Block</option><option value="all">Gesamtübersicht</option><option value="personal">Persönliche Wochenpläne</option><option value="codes">Persönliche Wahlcodes</option></select></label><button id="print">Drucken / PDF speichern</button></div>${s.planStatus !== "final" ? '<div class="warning">Der Gruppenplan ist noch ein Entwurf. Ausdrucke sind entsprechend gekennzeichnet.</div>' : ""}</div><div id="print-preview"></div>`;
+    `<div class="panel no-print"><h2>Druckübersichten</h2><p>Die Vorschau ergänzt Namen ausschliesslich auf diesem PC. Ohne Namensliste werden die Kennungen gedruckt.</p><div class="row"><label class="field">Ansicht<select id="print-type"><option value="groups">Gruppenlisten je Posten und Block</option><option value="all">Gesamtübersicht</option><option value="personal">Persönliche Wochenpläne</option></select></label><button id="print">Drucken / PDF speichern</button></div>${s.planStatus !== "final" ? '<div class="warning">Der Gruppenplan ist noch ein Entwurf. Ausdrucke sind entsprechend gekennzeichnet.</div>' : ""}</div><div id="print-preview"></div>`;
   const show = () => {
     const type = $("#print-type").value,
       heading = `<h1>${esc(s.title)}</h1><p>${s.planStatus === "final" ? "Freigegebener Plan" : "ENTWURF"} · Stand ${new Date().toLocaleString("de-CH")}</p>`;
@@ -538,7 +423,7 @@ function renderPrint() {
           const kids = s.children.filter(
             (c) => s.assignments[c.id]?.[b] === p.id,
           );
-          html += `<section class="panel print-page">${heading}<h2>${esc(p.title)}</h2><p>${b === 0 ? "Montag + Dienstag" : "Mittwoch + Donnerstag"} · ${kids.length} Kinder</p><table><thead><tr><th>Kind</th><th>Kennung</th><th>Anwesenheit</th><th>Notizen</th></tr></thead><tbody>${kids.map((c) => `<tr><td>${esc(name(c.id))}</td><td>${c.id}</td><td>□ &nbsp; □</td><td>________________</td></tr>`).join("")}</tbody></table></section>`;
+          html += `<section class="panel print-page">${heading}<h2>${esc(p.title)}</h2><p>${b === 0 ? "Montag + Dienstag" : "Mittwoch + Donnerstag"} · ${kids.length} Kinder</p><table><thead><tr><th>Kind</th><th>Kürzel</th><th>Anwesenheit</th><th>Notizen</th></tr></thead><tbody>${kids.map((c) => `<tr><td>${esc(name(c.id))}</td><td>${esc(c.id)}</td><td>□ &nbsp; □</td><td>________________</td></tr>`).join("")}</tbody></table></section>`;
         }
     }
     if (type === "all")
@@ -559,8 +444,6 @@ function renderPrint() {
               .join("")}</section>`,
         )
         .join("");
-    if (type === "codes")
-      html = `<div class="grid">${s.children.map((c) => `<section class="card"><h3>${esc(name(c.id))}</h3><p>Dein Code für die Projektwoche</p><strong class="code">${c.code.match(/.{1,4}/g).join("-")}</strong><p class="small">${esc(childLink())}<br>Hier kannst du später deine zwei Posten ansehen. Halte deinen Code geheim.</p></section>`).join("")}</div>`;
     $("#print-preview").innerHTML =
       html || '<div class="panel">Noch keine Kinder angelegt.</div>';
   };
@@ -576,111 +459,3 @@ function download(file, content, type = "application/json") {
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
-const to64 = (bytes) => btoa(String.fromCharCode(...bytes)),
-  from64 = (text) => Uint8Array.from(atob(text), (c) => c.charCodeAt(0));
-async function encryptionKey(password, salt) {
-  const key = await crypto.subtle.importKey(
-    "raw",
-    new TextEncoder().encode(password),
-    "PBKDF2",
-    false,
-    ["deriveKey"],
-  );
-  return crypto.subtle.deriveKey(
-    { name: "PBKDF2", salt, iterations: 250000, hash: "SHA-256" },
-    key,
-    { name: "AES-GCM", length: 256 },
-    false,
-    ["encrypt", "decrypt"],
-  );
-}
-function nameTransfer(mode) {
-  const dialog = document.createElement("dialog");
-  dialog.innerHTML = `<h2>Namensliste ${mode === "export" ? "exportieren" : "importieren"}</h2><form id="transfer"><p>Die Datei bleibt lokal. Zum Öffnen auf einem anderen PC wird dasselbe Passwort benötigt.</p>${mode === "import" ? '<label class="field">Verschlüsselte Datei<input type="file" name="file" accept=".json" required></label>' : ""}<label class="field">Passwort · mindestens 12 Zeichen<input name="password" type="password" minlength="12" required autocomplete="new-password"></label><div class="row"><button>${mode === "export" ? "Datei speichern" : "Datei öffnen"}</button><button type="button" class="quiet" id="cancel-transfer">Abbrechen</button></div><p id="transfer-error" role="alert"></p></form>`;
-  document.body.append(dialog);
-  dialog.showModal();
-  dialog.onclose = () => dialog.remove();
-  $("#cancel-transfer").onclick = () => dialog.close();
-  $("#transfer").onsubmit = async (e) => {
-    e.preventDefault();
-    const f = new FormData(e.target),
-      password = f.get("password");
-    try {
-      if (mode === "export") {
-        const salt = crypto.getRandomValues(new Uint8Array(16)),
-          iv = crypto.getRandomValues(new Uint8Array(12)),
-          key = await encryptionKey(password, salt);
-        const cipher = await crypto.subtle.encrypt(
-          { name: "AES-GCM", iv },
-          key,
-          new TextEncoder().encode(JSON.stringify({ app: API_URL, names })),
-        );
-        download(
-          "namensliste-verschluesselt.json",
-          JSON.stringify({
-            version: 1,
-            salt: to64(salt),
-            iv: to64(iv),
-            data: to64(new Uint8Array(cipher)),
-          }),
-        );
-      } else {
-        const file = f.get("file");
-        if (file.size > 200000) throw Error("Datei zu gross.");
-        const content = JSON.parse(await file.text());
-        if (content.version !== 1) throw Error("Unbekanntes Dateiformat.");
-        const salt = from64(content.salt),
-          iv = from64(content.iv);
-        if (salt.length !== 16 || iv.length !== 12)
-          throw Error("Ungültige Datei.");
-        const key = await encryptionKey(password, salt);
-        const plain = await crypto.subtle.decrypt(
-          { name: "AES-GCM", iv },
-          key,
-          from64(content.data),
-        );
-        const data = JSON.parse(new TextDecoder().decode(plain));
-        if (data.app !== API_URL)
-          throw Error(
-            "Diese Namensliste gehört zu einer anderen Projektwoche.",
-          );
-        if (
-          !data.names ||
-          typeof data.names !== "object" ||
-          Array.isArray(data.names) ||
-          Object.entries(data.names).some(
-            ([id, n]) =>
-              !/^K\d{3}$/.test(id) || typeof n !== "string" || n.length > 100,
-          )
-        )
-          throw Error("Ungültige Namensliste.");
-        const merged = { ...names, ...data.names };
-        localStorage.setItem(namesKey, JSON.stringify(merged));
-        names = merged;
-        render();
-      }
-      dialog.close();
-      notice(
-        mode === "export"
-          ? "Verschlüsselte Datei gespeichert."
-          : "Namen auf diesem Gerät ergänzt.",
-      );
-    } catch (e) {
-      $("#transfer-error").textContent =
-        e.name === "OperationError"
-          ? "Passwort falsch oder Datei beschädigt."
-          : e.message;
-    }
-  };
-}
-window.addEventListener("beforeunload", (e) => {
-  if (dirty) {
-    e.preventDefault();
-    e.returnValue = "";
-  }
-});
-setInterval(() => {
-  if (!document.hidden && !loading) refresh();
-}, 5000);
-window.addEventListener("online", refresh);
-refresh();

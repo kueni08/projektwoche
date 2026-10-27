@@ -1,8 +1,6 @@
 export function initialState() {
   return {
     title: "Projektwoche",
-    accessKey: crypto.randomUUID().replaceAll("-", ""),
-    open: false,
     projects: Array.from({ length: 9 }, (_, i) => ({
       id: String(i + 1),
       title: `Angebot ${i + 1}`,
