@@ -24,6 +24,9 @@ let publicData = null,
   dirty = false,
   loading = false,
   names = {},
+  manualPrintSelection = new Set(),
+  manualPrintTitle = "Meine Gruppe",
+  printType = "groups",
   timer;
 const namesKey = "projektwoche-names:" + API_URL;
 const introReady = new Promise((resolve) => setTimeout(resolve, 850));
@@ -120,6 +123,8 @@ function renderError(msg) {
   $("#retry").onclick = refresh;
 }
 function render() {
+  if (role !== "admin" || tab !== "print")
+    document.querySelector("#manual-print-page-style")?.remove();
   if (role === "admin") {
     if (!adminKey || !snapshot) renderAdminLogin();
     else renderAdmin();
@@ -438,14 +443,24 @@ function renderPlan() {
 }
 function renderPrint() {
   const s = state();
+  manualPrintSelection = new Set([...manualPrintSelection].filter((id) => s.children.some((c) => c.id === id)));
   $("#content").innerHTML =
-    `<div class="panel no-print"><h2>Druckübersichten</h2><p>Jede Gruppenliste zeigt für einen Tag, welche Kinder um 08.20 Uhr und welche erst um 10.25 Uhr zum Posten kommen. Namen werden nur auf diesem PC ergänzt.</p><div class="row"><label class="field">Druckformat<select id="print-type"><option value="groups">Postenliste je Tag</option><option value="band">Wintermarktband je Tag</option><option value="all">Gesamtübersicht</option><option value="personal">Ablaufplan je Kind</option></select></label><label class="field" id="day-filter">Tag<select id="print-day"><option value="all">Alle Tage</option>${DAYS.map((d) => `<option value="${d.id}">${d.label}</option>`).join("")}</select></label><label class="field" id="offer-filter">Posten<select id="print-offer"><option value="all">Alle Posten</option>${s.projects.map((p) => `<option value="${p.id}">${esc(p.title)}</option>`).join("")}</select></label><button id="print">Drucken / PDF speichern</button></div>${s.planStatus !== "final" ? '<div class="warning">Der Gruppenplan ist noch ein Entwurf. Ausdrucke sind entsprechend gekennzeichnet.</div>' : ""}</div><div id="print-preview"></div>`;
+    `<div class="panel no-print"><h2>Druckübersichten</h2><p>Jede Gruppenliste zeigt für einen Tag, welche Kinder um 08.20 Uhr und welche erst um 10.25 Uhr zum Posten kommen. Namen werden nur auf diesem PC ergänzt.</p><div class="row"><label class="field">Druckformat<select id="print-type"><option value="groups">Postenliste je Tag</option><option value="band">Wintermarktband je Tag</option><option value="all">Gesamtübersicht</option><option value="personal">Ablaufplan je Kind</option><option value="manual">Meine Auswahl · kompakte Wochenübersicht</option></select></label><label class="field" id="day-filter">Tag<select id="print-day"><option value="all">Alle Tage</option>${DAYS.map((d) => `<option value="${d.id}">${d.label}</option>`).join("")}</select></label><label class="field" id="offer-filter">Posten<select id="print-offer"><option value="all">Alle Posten</option>${s.projects.map((p) => `<option value="${p.id}">${esc(p.title)}</option>`).join("")}</select></label><button id="print">Drucken / PDF speichern</button></div><div id="manual-controls" hidden><div class="row"><label class="field">Titel der Auswahl<input id="manual-title" value="${esc(manualPrintTitle)}" maxlength="80"></label><label class="field">Kind suchen<input id="manual-search" type="search" placeholder="Name oder Kürzel"></label><button type="button" id="manual-all" class="quiet">Alle sichtbaren markieren</button><button type="button" id="manual-none" class="quiet">Auswahl löschen</button></div><p class="small" id="manual-count"></p><div class="manual-picker">${s.children.map((c) => `<label class="manual-choice"><input type="checkbox" data-manual-child="${esc(c.id)}" ${manualPrintSelection.has(c.id) ? "checked" : ""}><span>${esc(name(c.id))} <small>${esc(c.id)}</small></span></label>`).join("")}</div><p class="small">Die ausgewählten Kinder erscheinen gemeinsam auf einer A4-Querformatseite. Bei sehr grossen Gruppen kann der Browser zusätzliche Seiten erzeugen.</p></div>${s.planStatus !== "final" ? '<div class="warning">Der Gruppenplan ist noch ein Entwurf. Ausdrucke sind entsprechend gekennzeichnet.</div>' : ""}</div><div id="print-preview"></div>`;
+  const selectedChildren = manualPrintSelection;
+  $("#print-type").value = printType;
+  document.querySelector("#manual-print-page-style")?.remove();
+  const pageStyle = document.createElement("style");
+  pageStyle.id = "manual-print-page-style";
+  pageStyle.textContent = "";
+  document.head.append(pageStyle);
   const heading = (title, subtitle, tone = "") =>
     `<div class="print-heading ${tone}"><span class="eyebrow">${esc(s.title)} · ${s.planStatus === "final" ? "Freigegeben" : "Entwurf"}</span><h1>${esc(title)}</h1><p>${esc(subtitle)}</p></div>`;
   const chip = (id) => id
     ? `<span class="offer-chip ${offerTone(id)}">${esc(projectName(id))}</span>`
     : '<span class="small">Noch offen</span>';
-  const childLabel = (c) => `${esc(name(c.id))} <small class="small">${esc(c.id)}</small>`;
+  const compactChip = (id) => id
+    ? `<span class="compact-chip ${offerTone(id)}" title="${esc(projectName(id))}">${esc(String(id).padStart(2, "0"))}</span>`
+    : '<span class="small">–</span>';
   const conflict = (id, dayId) => dailySchedule(s, id, dayId).conflict
     ? `<p class="band-conflict">⚠ ${esc(name(id))} kann nach der Wintermarktband nicht zu Waldtage und Basteln dazustossen. Bitte in eine andere Gruppe umteilen.</p>`
     : "";
@@ -454,8 +469,12 @@ function renderPrint() {
       dayId = $("#print-day").value,
       offerId = $("#print-offer").value,
       days = DAYS.filter((d) => dayId === "all" || d.id === dayId);
-    $("#day-filter").hidden = type === "all" || type === "personal";
+    $("#day-filter").hidden = type === "all" || type === "personal" || type === "manual";
     $("#offer-filter").hidden = type !== "groups";
+    $("#manual-controls").hidden = type !== "manual";
+    $("#manual-count").textContent = `${selectedChildren.size} Kinder ausgewählt`;
+    $("#print").disabled = type === "manual" && selectedChildren.size === 0;
+    pageStyle.textContent = type === "manual" ? "@page { size: A4 landscape; margin: 10mm; }" : "";
     let html = "";
     if (type === "groups") {
       for (const day of days) for (const p of s.projects.filter((offer) => offerId === "all" || offer.id === offerId)) {
@@ -470,14 +489,50 @@ function renderPrint() {
       }
     } else if (type === "all") {
       html = `<section class="panel print-sheet">${heading("Gesamtübersicht", `${s.children.length} Kinder · Montag bis Donnerstag`)}<table class="schedule-table"><thead><tr><th>Kind</th><th>Kürzel</th><th>Mo. + Di.</th><th>Mi. + Do.</th><th>08.20–09.55 Uhr</th></tr></thead><tbody>${s.children.map((c) => `<tr><td>${esc(name(c.id))}</td><td>${esc(c.id)}</td><td>${chip(s.assignments[c.id]?.[0])}</td><td>${chip(s.assignments[c.id]?.[1])}</td><td>${isWintermarktband(s, c.id) ? "Wintermarktband" : "Eingeteilter Posten"}</td></tr>`).join("")}</tbody></table></section>`;
+    } else if (type === "manual") {
+      const selected = s.children.filter((c) => selectedChildren.has(c.id));
+      const title = $("#manual-title").value.trim() || "Meine Gruppe";
+      if (selected.length) {
+        const weekCell = (c, day) => {
+          const plan = dailySchedule(s, c.id, day.id);
+          return `<td class="${plan.conflict ? "band-conflict-row" : ""}"><div><strong>08.20</strong> ${plan.band ? '<span class="compact-band">Band</span>' : compactChip(plan.early)}</div><div><strong>10.25</strong> ${compactChip(plan.late)}</div></td>`;
+        };
+        html = `<section class="panel print-sheet manual-sheet">${heading(title, `${selected.length} Kinder · Montag bis Donnerstag · 08.20–09.55 und 10.25–12.00 Uhr`)}<table class="manual-table"><thead><tr><th>Kind</th>${DAYS.map((day) => `<th>${day.label}</th>`).join("")}</tr></thead><tbody>${selected.map((c) => `<tr><th>${esc(name(c.id))}<small>${esc(c.id)}</small></th>${DAYS.map((day) => weekCell(c, day)).join("")}</tr>`).join("")}</tbody></table><div class="manual-legend"><strong>Posten:</strong>${s.projects.map((p) => `<span>${compactChip(p.id)} ${esc(p.title)}</span>`).join("")}<span><span class="compact-band">Band</span> Wintermarktband</span></div>${selected.flatMap((c) => DAYS.filter((day) => dailySchedule(s, c.id, day.id).conflict).map((day) => conflict(c.id, day.id))).join("")}<p class="print-foot">Stand: ${new Date().toLocaleString("de-CH")} · Wechselpause 09.55–10.25 Uhr.</p></section>`;
+      }
     } else if (type === "personal") {
       html = s.children.map((c) => `<section class="panel print-page print-sheet personal-sheet">${heading(`Ablaufplan · ${name(c.id)}`, `Kürzel ${c.id} · Montag bis Donnerstag`)}<table class="schedule-table personal-table"><thead><tr><th>Tag</th><th>08.20–09.55 Uhr</th><th>10.25–12.00 Uhr</th></tr></thead><tbody>${DAYS.map((day) => { const plan = dailySchedule(s, c.id, day.id); return `<tr class="${plan.conflict ? "band-conflict-row" : ""}"><th>${day.label}</th><td>${plan.band ? '<strong class="band-label">Wintermarktband</strong>' : chip(plan.early)}</td><td>${chip(plan.late)}</td></tr>`; }).join("")}</tbody></table>${DAYS.map((day) => conflict(c.id, day.id)).join("")}<p class="print-foot">Wechselpause 09.55–10.25 Uhr · Bei Änderungen gilt der aktuelle Plan der Lehrperson.</p></section>`).join("");
     }
-    $("#print-preview").innerHTML = html || '<div class="panel">Für diese Auswahl sind noch keine Kinder eingeteilt.</div>';
+    $("#print-preview").innerHTML = html || `<div class="panel">${type === "manual" ? "Wähle oben die Kinder für deine Wochenübersicht aus." : "Für diese Auswahl sind noch keine Kinder eingeteilt."}</div>`;
   };
-  $("#print-type").onchange = show;
+  $("#print-type").onchange = () => { printType = $("#print-type").value; show(); };
   $("#print-day").onchange = show;
   $("#print-offer").onchange = show;
+  $("#manual-title").oninput = (event) => { manualPrintTitle = event.target.value; show(); };
+  $("#manual-search").oninput = (event) => {
+    const term = event.target.value.trim().toLocaleLowerCase("de-CH");
+    document.querySelectorAll(".manual-choice").forEach((label) => {
+      label.hidden = !label.textContent.toLocaleLowerCase("de-CH").includes(term);
+    });
+  };
+  document.querySelectorAll("[data-manual-child]").forEach((input) => {
+    input.onchange = () => {
+      if (input.checked) selectedChildren.add(input.dataset.manualChild);
+      else selectedChildren.delete(input.dataset.manualChild);
+      show();
+    };
+  });
+  $("#manual-all").onclick = () => {
+    document.querySelectorAll(".manual-choice:not([hidden]) input").forEach((input) => {
+      input.checked = true;
+      selectedChildren.add(input.dataset.manualChild);
+    });
+    show();
+  };
+  $("#manual-none").onclick = () => {
+    selectedChildren.clear();
+    document.querySelectorAll("[data-manual-child]").forEach((input) => { input.checked = false; });
+    show();
+  };
   $("#print").onclick = () => window.print();
   show();
 }
