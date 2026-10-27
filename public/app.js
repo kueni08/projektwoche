@@ -459,3 +459,14 @@ function download(file, content, type = "application/json") {
   a.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
+window.addEventListener("beforeunload", (event) => {
+  if (dirty) {
+    event.preventDefault();
+    event.returnValue = "";
+  }
+});
+setInterval(() => {
+  if (!document.hidden && !loading) refresh();
+}, 5000);
+window.addEventListener("online", refresh);
+refresh();
