@@ -1,0 +1,11 @@
+[
+  { "id": "1", "title": "Rezepte im Glas", "description": "Wir basteln, malen und schreiben Rezepte für kreative Rezepte im Glas. (Flyer: Posten 6)" },
+  { "id": "2", "title": "Waldtage und Basteln", "description": "Wir sind draussen, sammeln Blätter, Zapfen, Äste, Steine und Nüsse und basteln mit den gesammelten Dingen. (Flyer: Posten 7)" },
+  { "id": "3", "title": "Kerzen färben", "description": "Mit flüssigem Wachs und Neocolor färben wir Kerzen ein und verzieren sie mit Spezialstiften. (Flyer: Posten 4)" },
+  { "id": "4", "title": "Schlüsselanhänger knüpfen", "description": "Wir knüpfen Schlüsselanhänger. (Flyer: Posten 9)" },
+  { "id": "5", "title": "Weihnachtstanz", "description": "Wir lernen gemeinsam eine Choreografie zu «All I Want for Christmas Is You» und tanzen sie am Ende der Projektwoche in der Aula vor Publikum. (Flyer: Posten 8)" },
+  { "id": "6", "title": "Weihnachtssterne und Baumschmuck", "description": "Wir gestalten Weihnachtssterne aus Papier und Baumschmuck aus Salzgebäck. (Flyer: Posten 1)" },
+  { "id": "7", "title": "Tannenbäume und Sterne basteln", "description": "Wir gestalten Tannenbäume aus Kordel und Sterne aus Naturmaterialien. (Flyer: Posten 3)" },
+  { "id": "8", "title": "Magische Winterwelt", "description": "Wir gestalten zauberhafte Schneekugeln aus Papptellern. (Flyer: Posten 5)" },
+  { "id": "9", "title": "Falten und Backen", "description": "Wir falten Sterne, basteln LED-Lichterketten und backen Kekse. (Flyer: Posten 2)" }
+]

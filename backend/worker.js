@@ -105,6 +105,15 @@ function choices(v, s) {
 }
 function mutate(s, b) {
   switch (b.action) {
+    case "reset":
+      s.accessKey = crypto.randomUUID().replaceAll("-", "");
+      s.children = [];
+      s.assignments = {};
+      s.fixed = [];
+      s.relations = [];
+      s.open = false;
+      s.planStatus = "draft";
+      break;
     case "projects": {
       if (s.open) fail("Wahl zuerst schliessen, um Angebote zu ändern.");
       if (!Array.isArray(b.projects) || b.projects.length !== 9)
@@ -151,15 +160,28 @@ function mutate(s, b) {
       break;
     }
     case "open":
-      if (typeof b.open !== "boolean") fail("Ungültiger Status.");
-      if (
-        b.open &&
-        s.projects.filter((p) => p.capacity.some((n) => n > 0)).length < 4
-      )
-        fail("Mindestens vier Angebote müssen verfügbar sein.");
-      s.open = b.open;
-      if (b.open) s.planStatus = "draft";
+      if (b.open !== false) fail("Die Vorauswahl wird durch Lehrpersonen importiert.");
+      s.open = false;
       break;
+    case "choices": {
+      if (!Array.isArray(b.rows) || b.rows.length !== s.children.length)
+        fail("Die Datei muss genau eine Zeile pro Kind enthalten.");
+      const ids = new Set(s.children.map((c) => c.id));
+      const incoming = new Map();
+      for (const row of b.rows) {
+        if (!row || !ids.has(row.id) || incoming.has(row.id) || !Array.isArray(row.choices))
+          fail("Kennungen fehlen, sind doppelt oder unbekannt.");
+        incoming.set(row.id, row.choices.length ? choices(row.choices, s) : []);
+      }
+      for (const child of s.children) {
+        const next = incoming.get(child.id);
+        if (JSON.stringify(child.choices) !== JSON.stringify(next)) child.version++;
+        child.choices = next;
+      }
+      s.open = false;
+      s.planStatus = "draft";
+      break;
+    }
     case "plan": {
       if (s.open) fail("Wahl vor der Gruppenplanung schliessen.");
       if (
@@ -193,6 +215,25 @@ function mutate(s, b) {
         fail("Nur vollständig zugeteilte Kinder können fixiert werden.");
       s.fixed = [...new Set(b.fixed)];
       break;
+    case "relations": {
+      if (!Array.isArray(b.relations) || b.relations.length > 500)
+        fail("Zu viele oder ungültige Gruppenvorgaben.");
+      const ids = new Set(s.children.map((c) => c.id));
+      const seen = new Set();
+      s.relations = b.relations.map((rule) => {
+        if (!rule || typeof rule !== "object" || Array.isArray(rule) ||
+          !ids.has(rule.a) || !ids.has(rule.b) || rule.a === rule.b ||
+          !["together", "apart"].includes(rule.kind))
+          fail("Ungültige Gruppenvorgabe.");
+        const pair = [rule.a, rule.b].sort();
+        const key = pair.join(":");
+        if (seen.has(key)) fail("Für dieses Kinderpaar gibt es bereits eine Vorgabe.");
+        seen.add(key);
+        return { a: pair[0], b: pair[1], kind: rule.kind };
+      });
+      s.planStatus = "draft";
+      break;
+    }
     case "finalize":
       if (s.open) fail("Wahl zuerst schliessen.");
       if (!s.children.length) fail("Noch keine Kinder angelegt.");
@@ -311,15 +352,7 @@ export default {
                 });
                 break;
               }
-              if (!s.open) fail("Die Wahl ist im Moment geschlossen.");
-              if (b.version !== child.version)
-                fail(
-                  "Diese Wahl wurde auf einem anderen Gerät geändert. Bitte neu laden.",
-                  409,
-                );
-              child.choices = choices(b.choices, s);
-              child.version++;
-              s.planStatus = "draft";
+              fail("Die Vorauswahl wird von Lehrpersonen importiert.", 403);
             }
             const result = await env.DB.prepare(
               "UPDATE planning SET payload=?,revision=revision+1 WHERE id=1 AND revision=?",

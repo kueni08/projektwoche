@@ -1,6 +1,7 @@
 import { API_URL } from "./config.js";
 import { allocate, validatePlan } from "./model.js";
 import { exportCodes, importCodeNames } from "./csv.js";
+import { makeChoiceTemplate, parseChoiceTemplate } from "./excel.js";
 const $ = (s) => document.querySelector(s),
   esc = (s) =>
     String(s ?? "").replace(
@@ -21,7 +22,7 @@ let publicData = null,
   adminKey = "",
   childCode = "",
   child = null,
-  selected = [],
+  importDraft = null,
   dirty = false,
   loading = false,
   names = {},
@@ -112,10 +113,7 @@ async function refresh() {
       const changed = data.revision !== publicData?.revision;
       publicData = data;
       if (changed && !dirty && !editing) {
-        if (child && childCode) {
-          child = await api("/me", { body: {}, key: childCode });
-          selected = [...child.choices];
-        }
+        if (child && childCode) child = await api("/me", { body: {}, key: childCode });
         render();
       }
     }
@@ -147,7 +145,7 @@ $("#switch-role").onclick = () => {
   dirty = false;
   role = role === "child" ? "admin" : "child";
   $("#switch-role").textContent =
-    role === "child" ? "Lehrpersonen" : "Zur Kinderwahl";
+    role === "child" ? "Lehrpersonen" : "Zur Kinderansicht";
   render();
   refresh();
 };
@@ -158,12 +156,11 @@ function renderChild() {
   }
   const p = publicData;
   $("#app").innerHTML =
-    `<section class="intro"><div><span class="eyebrow">${esc(p.title)}</span><h1>Was möchtest du entdecken?</h1><p>Wähle mindestens vier Angebote, die dir gefallen. Du besuchst zwei verschiedene Posten – jeweils zwei Tage lang.</p></div>${blocks()}</section>
- ${!child ? `<form id="child-login" class="panel"><div class="row between"><div><h2>Dein persönlicher Code</h2><p class="small">Öffne den Kinderlink deiner Lehrperson und gib deinen vierstelligen Code ein. Dein Name wird hier nicht gespeichert.</p></div><div class="row"><label class="field">Kindercode<input name="code" required autocomplete="off" spellcheck="false" placeholder="1234" inputmode="numeric" pattern="[1-9][0-9]{3}" minlength="4" maxlength="4"></label><button>Wahl öffnen</button></div></div></form>` : `<div class="panel row between"><div>Angemeldet als <strong>${esc(child.id)}</strong> <span class="pill">${child.choices.length ? "Wahl gespeichert" : "Noch keine Wahl"}</span></div><button id="child-logout" class="quiet">Abmelden</button></div>`}
- ${!p.open ? '<div class="warning">Die Wahl ist momentan geschlossen. Die Lehrpersonen bereiten die Angebote oder die Gruppeneinteilung vor.</div>' : ""}
+    `<section class="intro"><div><span class="eyebrow">${esc(p.title)}</span><h1>Deine Projektwoche</h1><p>Du besuchst zwei verschiedene Posten – jeweils zwei Tage lang. Die Lehrpersonen erfassen eure Wünsche und teilen die Gruppen ein.</p></div>${blocks()}</section>
+ ${!child ? `<form id="child-login" class="panel"><div class="row between"><div><h2>Dein persönlicher Code</h2><p class="small">Öffne den Kinderlink deiner Lehrperson und gib deinen vierstelligen Code ein. Hier siehst du später deine zwei Posten.</p></div><div class="row"><label class="field">Kindercode<input name="code" required autocomplete="off" spellcheck="false" placeholder="1234" inputmode="numeric" pattern="[1-9][0-9]{3}" minlength="4" maxlength="4"></label><button>Meine Posten ansehen</button></div></div></form>` : `<div class="panel row between"><div>Angemeldet als <strong>${esc(child.id)}</strong></div><button id="child-logout" class="quiet">Abmelden</button></div>`}
+ ${child && !child.assignment ? '<div class="warning">Die Gruppeneinteilung wird vorbereitet. Schau später wieder vorbei.</div>' : ""}
  ${child?.assignment ? `<div class="success"><strong>Deine zwei Posten</strong><p>Mo. + Di.: ${esc(p.projects.find((x) => x.id === child.assignment[0])?.title)}<br>Mi. + Do.: ${esc(p.projects.find((x) => x.id === child.assignment[1])?.title)}</p></div>` : ""}
- <div class="grid">${p.projects.map((offer, i) => `<article class="card ${selected.includes(offer.id) ? "selected" : ""}" data-card="${offer.id}"><span class="number">${String(i + 1).padStart(2, "0")}</span><h3>${esc(offer.title)}</h3><p>${esc(offer.description)}</p>${offer.capacity.every((n) => !n) ? '<span class="small">Nicht verfügbar</span>' : `<label class="choose"><input type="checkbox" data-choice="${offer.id}" ${selected.includes(offer.id) ? "checked" : ""} ${!child || !p.open ? "disabled" : ""}>Das kann ich mir vorstellen</label>`}</article>`).join("")}</div>
- ${child && p.open ? `<div class="savebar"><span id="choice-count">${selected.length} Angebote gewählt · mindestens 4</span><button id="save-choice" ${selected.length < 4 ? "disabled" : ""}>Meine Wahl speichern</button></div>` : ""}`;
+ <div class="grid">${p.projects.map((offer, i) => `<article class="card" data-card="${offer.id}"><span class="number">${String(i + 1).padStart(2, "0")}</span><h3>${esc(offer.title)}</h3><p>${esc(offer.description)}</p></article>`).join("")}</div>`;
   $("#child-login")?.addEventListener("submit", async (e) => {
     e.preventDefault();
     const button = e.target.querySelector("button");
@@ -174,7 +171,6 @@ function renderChild() {
         .replace(/[\s-]/g, "")
         .toUpperCase();
       child = await api("/me", { body: {}, key: childCode });
-      selected = [...child.choices];
       dirty = false;
       render();
     } catch (e) {
@@ -184,49 +180,10 @@ function renderChild() {
     }
   });
   $("#child-logout")?.addEventListener("click", () => {
-    if (dirty && !confirm("Ungespeicherte Wahl verwerfen?")) return;
     child = null;
     childCode = "";
-    selected = [];
     dirty = false;
     render();
-  });
-  document.querySelectorAll("[data-choice]").forEach(
-    (input) =>
-      (input.onchange = () => {
-        selected = input.checked
-          ? [...selected, input.dataset.choice]
-          : selected.filter((x) => x !== input.dataset.choice);
-        dirty = true;
-        input.closest(".card").classList.toggle("selected", input.checked);
-        $("#choice-count").textContent =
-          `${selected.length} Angebote gewählt · mindestens 4`;
-        $("#save-choice").disabled = selected.length < 4;
-      }),
-  );
-  $("#save-choice")?.addEventListener("click", async () => {
-    const button = $("#save-choice");
-    button.disabled = true;
-    try {
-      child = await api("/choice", {
-        body: { choices: selected, version: child.version },
-        key: childCode,
-      });
-      dirty = false;
-      notice("Deine Wahl ist gespeichert. Vielen Dank!");
-      render();
-    } catch (e) {
-      notice(e.message);
-      if (e.status === 409) {
-        const current = await api("/me", { body: {}, key: childCode });
-        child = current;
-        notice(
-          "Auf einem anderen Gerät wurde gespeichert. Deine Auswahl bleibt sichtbar. Prüfe sie und speichere erneut.",
-        );
-      }
-    } finally {
-      if ($("#save-choice")) $("#save-choice").disabled = selected.length < 4;
-    }
   });
 }
 function renderAdminLogin() {
@@ -271,7 +228,7 @@ function renderAdmin() {
   const s = state(),
     answered = s.children.filter((c) => c.choices.length >= 4).length;
   $("#app").innerHTML =
-    `<section class="intro no-print"><div><span class="eyebrow">Planungsraum</span><h1>${esc(s.title)}</h1><p>Neun Angebote. Zwei Blöcke. Alle arbeiten am gleichen Stand.</p></div><div class="row"><span class="pill">${s.open ? "Wahl geöffnet" : "Wahl geschlossen"}</span><button id="logout" class="quiet">Abmelden</button></div></section>
+    `<section class="intro no-print"><div><span class="eyebrow">Planungsraum</span><h1>${esc(s.title)}</h1><p>Neun Angebote. Zwei Blöcke. Alle arbeiten am gleichen Stand.</p></div><div class="row"><span class="pill">Vorauswahl per Excel</span><button id="logout" class="quiet">Abmelden</button></div></section>
  <nav class="no-print">${[
    ["overview", "Übersicht"],
    ["projects", "Angebote"],
@@ -320,8 +277,8 @@ function renderAdmin() {
   };
   if (tab === "overview") {
     $("#content").innerHTML =
-      `<div class="stats"><div class="stat"><strong>${s.children.length}</strong>Kinder angelegt</div><div class="stat"><strong>${answered} / ${s.children.length}</strong>Wahlen eingegangen</div><div class="stat"><strong>${Object.values(s.assignments).filter((p) => p?.every(Boolean)).length}</strong>vollständig zugeteilt</div></div><div class="panel"><h2>So entsteht eure Projektwoche</h2><ol><li><p>Unter «Angebote» die neun Posten beschreiben und Plätze festlegen.</p></li><li><p>Kinder anlegen, lokal Namen ergänzen und persönliche Codes drucken.</p></li><li><p>Die Wahl öffnen. Kinder wählen mindestens vier Angebote.</p></li><li><p>Die Wahl schliessen, Gruppen vorschlagen lassen und prüfen.</p></li><li><p>Den Plan freigeben und die Gruppenlisten drucken.</p></li></ol><button id="toggle-open">${s.open ? "Wahl schliessen" : "Wahl öffnen"}</button> <span class="small">${s.planStatus === "final" ? "Plan freigegeben" : "Plan ist ein Entwurf"}</span></div>`;
-    $("#toggle-open").onclick = () => save({ action: "open", open: !s.open });
+      `<div class="stats"><div class="stat"><strong>${s.children.length}</strong>Kinder angelegt</div><div class="stat"><strong>${answered} / ${s.children.length}</strong>Vorauswahlen erfasst</div><div class="stat"><strong>${Object.values(s.assignments).filter((p) => p?.every(Boolean)).length}</strong>vollständig zugeteilt</div></div><div class="panel"><h2>So entsteht eure Projektwoche</h2><ol><li><p>Unter «Angebote» die neun Posten beschreiben und Plätze festlegen.</p></li><li><p>Kinder anlegen und die vierstelligen Codes zuordnen.</p></li><li><p>Unter «Wahlübersicht» die Excel-Vorlage herunterladen, die Kinder befragen und die ausgefüllte Datei importieren.</p></li><li><p>Gruppenvorgaben ergänzen, Verteilung vorschlagen lassen und prüfen.</p></li><li><p>Den Plan freigeben und die Gruppenlisten drucken.</p></li></ol>${s.open ? '<button id="toggle-open">Alte Kinderwahl schliessen</button>' : ''} <span class="small">${s.planStatus === "final" ? "Plan freigegeben" : "Plan ist ein Entwurf"}</span></div>`;
+    if (s.open) $("#toggle-open").onclick = () => save({ action: "open", open: false });
   }
   if (tab === "projects") renderProjects();
   if (tab === "children") renderChildren();
@@ -352,7 +309,7 @@ function renderProjects() {
 function renderChildren() {
   const s = state();
   $("#content").innerHTML =
-    `<div class="panel"><h2>Kinder anlegen</h2><p>Jedes Kind erhält eine Kennung und einen geheimen Wahlcode. Die Namensspalte bleibt ausschliesslich auf diesem Gerät.</p><form id="add-children" class="row"><label class="field">Anzahl neuer Kinder<input type="number" name="count" min="1" max="${200 - s.children.length}" value="${s.children.length ? 1 : 100}" required></label><button ${s.children.length >= 200 ? "disabled" : ""}>Codes erstellen</button></form></div><div class="panel"><div class="row between"><h2>Lokale Namensliste</h2><div class="row"><button id="export-names" class="quiet">Verschlüsselt exportieren</button><button id="import-names" class="quiet">Importieren</button><button id="forget-names" class="danger">Namen hier entfernen</button></div></div><p class="small">Namen werden nur im Browser dieses PCs gespeichert. Für einen anderen PC die verschlüsselte Datei exportieren und dort importieren. Auf gemeinsam genutzten PCs nach Gebrauch entfernen.</p><div class="table-wrap"><table><thead><tr><th>Kennung</th><th>Name · nur lokal</th><th>Geheimer Wahlcode</th><th>Wahl</th></tr></thead><tbody>${s.children.map((c) => `<tr><td>${c.id}</td><td><input data-name="${c.id}" aria-label="Lokaler Name für ${c.id}" value="${esc(names[c.id] || "")}" maxlength="100"></td><td class="code">${c.code.match(/.{1,4}/g).join("-")}</td><td>${c.choices.length ? "Gespeichert" : "Noch offen"}</td></tr>`).join("")}</tbody></table></div></div>`;
+    `<div class="panel"><h2>Kinder anlegen</h2><p>Jedes Kind erhält eine Kennung und einen vierstelligen Code für die spätere Ansicht des Wochenplans. Die Namensspalte bleibt ausschliesslich auf diesem Gerät.</p><form id="add-children" class="row"><label class="field">Anzahl neuer Kinder<input type="number" name="count" min="1" max="${200 - s.children.length}" value="${s.children.length ? 1 : 100}" required></label><button ${s.children.length >= 200 ? "disabled" : ""}>Codes erstellen</button></form></div><div class="panel"><div class="row between"><h2>Lokale Namensliste</h2><div class="row"><button id="export-names" class="quiet">Verschlüsselt exportieren</button><button id="import-names" class="quiet">Importieren</button><button id="forget-names" class="danger">Namen hier entfernen</button></div></div><p class="small">Namen werden nur im Browser dieses PCs gespeichert. Für einen anderen PC die verschlüsselte Datei exportieren und dort importieren. Auf gemeinsam genutzten PCs nach Gebrauch entfernen.</p><div class="table-wrap"><table><thead><tr><th>Kennung</th><th>Name · nur lokal</th><th>Kindercode</th><th>Vorauswahl</th></tr></thead><tbody>${s.children.map((c) => `<tr><td>${c.id}</td><td><input data-name="${c.id}" aria-label="Lokaler Name für ${c.id}" value="${esc(names[c.id] || "")}" maxlength="100"></td><td class="code">${c.code.match(/.{1,4}/g).join("-")}</td><td>${c.choices.length ? "Erfasst" : "Fehlt"}</td></tr>`).join("")}</tbody></table></div></div>`;
   $("#add-children").onsubmit = (e) => {
     e.preventDefault();
     save({
@@ -379,7 +336,7 @@ function renderChildren() {
   $("#content").prepend(controls);
   const linkPanel = document.createElement("div");
   linkPanel.className = "panel";
-  linkPanel.innerHTML = `<h2>Kinderlink</h2><p>Diesen gemeinsamen Link an den Schul-PCs öffnen oder mit den Kindern teilen. Danach genügen die vier Ziffern auf dem Codezettel.</p><label class="field">Link zur Kinderwahl<input readonly id="child-link" value="${esc(childLink())}"></label><button id="copy-child-link" class="quiet">Kinderlink kopieren</button>`;
+  linkPanel.innerHTML = `<h2>Kinderlink</h2><p>Über diesen Link und den vierstelligen Code können Kinder nach der Freigabe ihre zwei Posten ansehen.</p><label class="field">Link zur Kinderansicht<input readonly id="child-link" value="${esc(childLink())}"></label><button id="copy-child-link" class="quiet">Kinderlink kopieren</button>`;
   $("#content").prepend(linkPanel);
   $("#copy-child-link").onclick = async () => {
     try {
@@ -434,13 +391,54 @@ function renderChildren() {
 function renderChoices() {
   const s = state();
   $("#content").innerHTML =
-    `<div class="panel"><h2>Wer hat was gewählt?</h2><p class="small">Die Häkchen zeigen gleichwertige Wünsche. Namen erscheinen nur, wenn sie auf diesem PC hinterlegt sind.</p><div class="table-wrap"><table><thead><tr><th>Kind</th>${s.projects.map((p) => `<th class="center" title="${esc(p.title)}">${esc(p.title)}</th>`).join("")}<th>Status</th></tr></thead><tbody>${s.children.map((c) => `<tr><td>${esc(name(c.id))}<br><span class="small">${c.id}</span></td>${s.projects.map((p) => `<td class="center">${c.choices.includes(p.id) ? "✓" : "—"}</td>`).join("")}<td>${c.choices.length >= 4 ? "Gewählt" : "Fehlt"}</td></tr>`).join("")}</tbody></table></div></div>`;
+    `<div class="panel"><h2>Vorauswahl aus Excel</h2><p>Vorlage herunterladen, nach der Befragung pro Kind mindestens vier Angebote mit x markieren und die Datei hier prüfen. Die Namen werden nur lokal gespeichert; online gehen ausschliesslich Kennungen und Wahlen.</p><div class="row"><button id="download-template" ${!s.children.length ? "disabled" : ""}>Excel-Vorlage herunterladen</button><label class="button quiet">Ausgefüllte Excel auswählen<input id="import-choices" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style="display:none" ${!s.children.length ? "disabled" : ""}></label></div><div id="import-preview"></div></div><div class="panel"><h2>Wer hat was gewählt?</h2><p class="small">Die Häkchen zeigen gleichwertige Wünsche. Namen erscheinen nur, wenn sie auf diesem PC hinterlegt sind.</p><div class="table-wrap"><table><thead><tr><th>Kind</th>${s.projects.map((p) => `<th class="center" title="${esc(p.title)}">${esc(p.title)}</th>`).join("")}<th>Status</th></tr></thead><tbody>${s.children.map((c) => `<tr><td>${esc(name(c.id))}<br><span class="small">${c.id}</span></td>${s.projects.map((p) => `<td class="center">${c.choices.includes(p.id) ? "✓" : "—"}</td>`).join("")}<td>${c.choices.length >= 4 ? "Erfasst" : "Fehlt"}</td></tr>`).join("")}</tbody></table></div></div>`;
+  $("#download-template").onclick = async () => {
+    try { download("projektwoche-vorauswahl.xlsx", await makeChoiceTemplate(s, names), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"); }
+    catch (e) { notice("Vorlage konnte nicht erstellt werden: " + e.message); }
+  };
+  $("#import-choices").onchange = async (event) => {
+    try {
+      const file = event.target.files[0];
+      if (!file) return;
+      if (file.size > 2_000_000) throw Error("Excel-Datei ist zu gross.");
+      const parsed = await parseChoiceTemplate(await file.arrayBuffer(), s);
+      importDraft = { ...parsed, revision: snapshot.revision };
+      $("#import-preview").innerHTML = `<div class="success"><strong>Import geprüft</strong><p>${parsed.rows.length} Kinder enthalten · ${parsed.answered} mit mindestens vier Wünschen · ${parsed.rows.length - parsed.answered} ohne Vorauswahl. ${Object.keys(parsed.names).length} Namen werden nur auf diesem Gerät ergänzt.</p><button id="save-import">Vorauswahl für alle Kinder speichern</button></div>`;
+      $("#save-import").onclick = async () => {
+        if (snapshot.revision !== importDraft.revision) { notice("Der gemeinsame Stand hat sich geändert. Bitte die Excel-Datei erneut auswählen."); return; }
+        const result = await save({ action: "choices", rows: importDraft.rows });
+        if (result) {
+          names = { ...names, ...importDraft.names };
+          try { localStorage.setItem(namesKey, JSON.stringify(names)); }
+          catch { notice("Wahlen gespeichert, aber Namen konnten lokal nicht gesichert werden. Bitte Namensliste exportieren."); }
+          importDraft = null;
+          render();
+        }
+      };
+    } catch (e) { importDraft = null; $("#import-preview").innerHTML = ""; notice(e.message); }
+  };
 }
 function renderPlan() {
   const s = state(),
     check = validatePlan(s, s.assignments, { allowOutside: true });
   $("#content").innerHTML =
     `<div class="panel"><div class="row between"><div><h2>Gruppen für zwei Blöcke</h2><p class="small">Der Vorschlag berücksichtigt die Wünsche und gleicht Gruppengrössen aus. Fixierte Kinder bleiben an ihrem Platz.</p></div><button id="generate" ${s.open || !s.children.length ? "disabled" : ""}>Verteilung vorschlagen</button></div>${s.open ? '<div class="warning">Zuerst die Wahl schliessen.</div>' : ""}<div class="grid">${s.projects.map((p, i) => `<div><h3>${esc(p.title)}</h3><p class="small">Mo. + Di. <strong>${check.counts[i][0]} / ${p.capacity[0]}</strong><br>Mi. + Do. <strong>${check.counts[i][1]} / ${p.capacity[1]}</strong></p></div>`).join("")}</div></div><div class="panel"><div class="table-wrap"><table><thead><tr><th>Kind</th><th>Mo. + Di.</th><th>Mi. + Do.</th><th>Fixieren</th></tr></thead><tbody>${s.children.map((c) => `<tr><td>${esc(name(c.id))}<br><span class="small">${c.id}</span></td>${[0, 1].map((b) => `<td><select data-assign="${c.id}" data-block="${b}" aria-label="${c.id}, Block ${b + 1}" ${s.fixed.includes(c.id) ? "disabled" : ""}><option value="">Noch offen</option>${s.projects.map((p) => `<option value="${p.id}" ${s.assignments[c.id]?.[b] === p.id ? "selected" : ""}>${esc(p.title)}${c.choices.includes(p.id) ? " ✓" : " · nicht gewählt"}</option>`).join("")}</select></td>`).join("")}<td><input type="checkbox" data-fix="${c.id}" aria-label="${c.id} fixieren" ${s.fixed.includes(c.id) ? "checked" : ""}></td></tr>`).join("")}</tbody></table></div><div id="plan-feedback"></div><label class="choose" style="margin:20px 0"><input type="checkbox" id="allow-outside">Ich bestätige Zuteilungen ausserhalb der gewählten Angebote.</label><div class="row"><button id="save-plan" ${s.open ? "disabled" : ""}>Änderungen speichern</button><button id="finalize" class="quiet" ${s.open ? "disabled" : ""}>Plan freigeben</button></div><p class="small">Freigegebene Posten sehen die Kinder nach der Anmeldung. Neue Änderungen machen den Plan wieder zum Entwurf.</p></div>`;
+  const rules = s.relations || [];
+  const childOptions = s.children.map((c) => `<option value="${esc(c.id)}">${esc(name(c.id))} (${esc(c.id)})</option>`).join("");
+  $("#content").insertAdjacentHTML("afterbegin",
+    `<div class="panel"><h2>Wer soll zusammen sein?</h2><p class="small">Diese Vorgaben gelten in beiden Blöcken. «Zusammen» bedeutet zweimal derselbe Posten; «nicht zusammen» bedeutet zweimal verschiedene Gruppen. Die Kinder sehen diese Vorgaben nicht.</p><form id="relation-form" class="row"><label class="field">Erstes Kind<select name="a" required><option value="">Bitte wählen</option>${childOptions}</select></label><label class="field">Zweites Kind<select name="b" required><option value="">Bitte wählen</option>${childOptions}</select></label><label class="field">Vorgabe<select name="kind"><option value="together">Sicher zusammen</option><option value="apart">Sicher nicht zusammen</option></select></label><button ${s.children.length < 2 ? "disabled" : ""}>Vorgabe hinzufügen</button></form>${rules.length ? `<div class="table-wrap"><table><thead><tr><th>Kind 1</th><th>Kind 2</th><th>Vorgabe</th><th></th></tr></thead><tbody>${rules.map((rule, i) => `<tr><td>${esc(name(rule.a))} <span class="small">${esc(rule.a)}</span></td><td>${esc(name(rule.b))} <span class="small">${esc(rule.b)}</span></td><td>${rule.kind === "together" ? "Sicher zusammen" : "Sicher nicht zusammen"}</td><td><button type="button" class="quiet mini" data-remove-rule="${i}" aria-label="Vorgabe für ${esc(rule.a)} und ${esc(rule.b)} entfernen">Entfernen</button></td></tr>`).join("")}</tbody></table></div>` : '<p class="small">Noch keine Vorgaben.</p>'}</div>`);
+  $("#relation-form").onsubmit = (event) => {
+    event.preventDefault();
+    if (dirty) { notice("Zuerst die Zuteilung speichern oder neu laden."); return; }
+    const form = new FormData(event.target), a = form.get("a"), b = form.get("b");
+    if (a === b) { notice("Bitte zwei verschiedene Kinder wählen."); return; }
+    save({ action: "relations", relations: [...rules, { a, b, kind: form.get("kind") }] });
+  };
+  document.querySelectorAll("[data-remove-rule]").forEach((button) =>
+    button.onclick = () => {
+      if (dirty) { notice("Zuerst die Zuteilung speichern oder neu laden."); return; }
+      save({ action: "relations", relations: rules.filter((_, i) => i !== Number(button.dataset.removeRule)) });
+    });
   let draft = structuredClone(s.assignments);
   const feedback = () => {
     const c = validatePlan(s, draft, { allowOutside: true });
@@ -562,7 +560,7 @@ function renderPrint() {
         )
         .join("");
     if (type === "codes")
-      html = `<div class="grid">${s.children.map((c) => `<section class="card"><h3>${esc(name(c.id))}</h3><p>Dein Code für die Projektwoche</p><strong class="code">${c.code.match(/.{1,4}/g).join("-")}</strong><p class="small">${esc(childLink())}<br>Wähle mindestens vier Angebote. Halte deinen Code geheim.</p></section>`).join("")}</div>`;
+      html = `<div class="grid">${s.children.map((c) => `<section class="card"><h3>${esc(name(c.id))}</h3><p>Dein Code für die Projektwoche</p><strong class="code">${c.code.match(/.{1,4}/g).join("-")}</strong><p class="small">${esc(childLink())}<br>Hier kannst du später deine zwei Posten ansehen. Halte deinen Code geheim.</p></section>`).join("")}</div>`;
     $("#print-preview").innerHTML =
       html || '<div class="panel">Noch keine Kinder angelegt.</div>';
   };

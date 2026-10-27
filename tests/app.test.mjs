@@ -4,7 +4,10 @@ import { DatabaseSync } from "node:sqlite";
 import { readFileSync } from "node:fs";
 import { initialState, allocate, validatePlan } from "../public/model.js";
 import { exportCodes, importCodeNames } from "../public/csv.js";
+import ExcelJS from "exceljs";
+import { makeChoiceTemplate, parseChoiceTemplate } from "../public/excel.js";
 import worker from "../backend/worker.js";
+globalThis.ExcelJS = ExcelJS;
 function database() {
   const db = new DatabaseSync(":memory:");
   db.exec(
@@ -97,6 +100,60 @@ test("restricted choices, fixed pairs, unavailable offers and shortage", () => {
     [],
   );
 });
+test("together and apart rules hold in both blocks and survive fixed assignments", () => {
+  const s = initialState();
+  s.children = Array.from({ length: 12 }, (_, i) => ({
+    id: `K${i}`, choices: s.projects.map((p) => p.id),
+  }));
+  s.relations = [
+    { a: "K0", b: "K1", kind: "together" },
+    { a: "K1", b: "K2", kind: "apart" },
+    { a: "K1", b: "K3", kind: "together" },
+  ];
+  s.assignments.K0 = ["1", "2"];
+  s.fixed = ["K0"];
+  const { plan, missing } = allocate(s);
+  assert.equal(missing, 0);
+  assert.deepEqual(plan.K0, ["1", "2"]);
+  assert.deepEqual(plan.K1, plan.K0);
+  assert.deepEqual(plan.K3, plan.K0);
+  assert.notEqual(plan.K2[0], plan.K1[0]);
+  assert.notEqual(plan.K2[1], plan.K1[1]);
+  assert.deepEqual(validatePlan(s, plan, { complete: true }).issues, []);
+  plan.K2[0] = plan.K1[0];
+  assert.match(validatePlan(s, plan).issues.join(" "), /nicht zusammen/);
+});
+
+test("impossible together rules fail instead of producing an invalid proposal", () => {
+  const s = initialState();
+  s.children = ["K0", "K1"].map((id) => ({ id, choices: ["1", "2", "3", "4"] }));
+  s.projects.forEach((p) => { p.capacity = [1, 1]; });
+  s.relations = [{ a: "K0", b: "K1", kind: "together" }];
+  assert.throws(() => allocate(s), /keine zwei gemeinsamen/);
+});
+
+test("admin rules are shared and server rejects contradictory manual assignments", async () => {
+  const { request } = await setup();
+  let a = await request("/admin");
+  a = await request("/admin", { action: "children", count: 2, revision: a.data.revision });
+  a = await request("/admin", {
+    action: "relations", revision: a.data.revision,
+    relations: [{ a: "K001", b: "K002", kind: "apart" }],
+  });
+  assert.equal(a.status, 200);
+  assert.equal(a.data.state.relations.length, 1);
+  assert.equal((await request("/admin", {
+    action: "plan", revision: a.data.revision, allowOutside: true,
+    plan: { K001: ["1", "2"], K002: ["1", "3"] },
+  })).status, 400);
+  assert.equal((await request("/admin", {
+    action: "relations", revision: a.data.revision,
+    relations: [
+      { a: "K001", b: "K002", kind: "apart" },
+      { a: "K002", b: "K001", kind: "together" },
+    ],
+  })).status, 400);
+});
 test("CSV round-trip handles quotes, semicolons, umlauts, formulas and mismatched codes", () => {
   const children = [{ id: "K001", code: "ABCDEFGHJKLMNPQR" }];
   const names = { K001: 'Müller; "Anna"' };
@@ -114,7 +171,19 @@ test("CSV round-trip handles quotes, semicolons, umlauts, formulas and mismatche
     importCodeNames("Kennung;Wahlcode;Name\nK001;falsch;Anna", children),
   );
 });
-test("API protects admin data, validates choices and prevents stale overwrites", async () => {
+test("Excel template round-trip validates choices and keeps names separate", async () => {
+  const s = initialState();
+  s.children = [{ id: "K001", choices: ["1", "2", "3", "4"] }, { id: "K002", choices: [] }];
+  const file = await makeChoiceTemplate(s, { K001: "Müller Anna" });
+  const parsed = await parseChoiceTemplate(file, s);
+  assert.deepEqual(parsed.rows, [{ id: "K001", choices: ["1", "2", "3", "4"] }, { id: "K002", choices: [] }]);
+  assert.deepEqual(parsed.names, { K001: "Müller Anna" });
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(file);
+  workbook.getWorksheet("Vorauswahl").getCell("C6").value = "falsch";
+  await assert.rejects(parseChoiceTemplate(await workbook.xlsx.writeBuffer(), s), /nur mit x/);
+});
+test("API protects admin data, imports complete choices and prevents stale overwrites", async () => {
   const { request } = await setup();
   assert.equal((await request("/admin", undefined, "wrong")).status, 401);
   let a = await request("/admin");
@@ -127,46 +196,32 @@ test("API protects admin data, validates choices and prevents stale overwrites",
   const oldRevision = a.data.revision;
   assert.equal(new Set(a.data.state.children.map((c) => c.code)).size, 4);
   a = await request("/admin", {
-    action: "open",
-    open: true,
+    action: "choices",
+    rows: a.data.state.children.map((c) => ({ id: c.id, choices: ["1", "2", "3", "4"] })),
     revision: oldRevision,
   });
   assert.equal(
     (
       await request("/admin", {
-        action: "open",
-        open: false,
+        action: "choices",
+        rows: [],
         revision: oldRevision,
       })
     ).status,
     409,
   );
   const codes = a.data.state.children.map((c) => c.code);
-  const responses = await Promise.all(
-    codes.map((code) =>
-      request("/choice", { choices: ["1", "2", "3", "4"], version: 0 }, code),
-    ),
-  );
-  assert.ok(responses.every((r) => r.status === 200));
   a = await request("/admin");
   assert.ok(a.data.state.children.every((c) => c.version === 1));
   assert.equal(
     (
-      await request(
-        "/choice",
-        { choices: ["1", "2", "3", "4"], version: 0 },
-        codes[0],
-      )
+      await request("/choice", { choices: ["1", "2", "3", "4"], version: 1 }, codes[0])
     ).status,
-    409,
+    403,
   );
   assert.equal(
     (
-      await request(
-        "/choice",
-        { choices: ["1", "1", "2", "3"], version: 1 },
-        codes[0],
-      )
+      await request("/admin", { action: "choices", rows: [{ id: "K001", choices: ["1", "1", "2", "3"] }], revision: a.data.revision })
     ).status,
     400,
   );
@@ -175,7 +230,7 @@ test("API protects admin data, validates choices and prevents stale overwrites",
   assert.equal(JSON.stringify(publicRes.data).includes(codes[0]), false);
   assert.equal((await request("/me", {}, codes[0])).data.id, "K001");
 });
-test("reject invalid plans, closed choices, invalid origins and unknown payloads", async () => {
+test("reject invalid plans, child choices, invalid origins and unknown payloads", async () => {
   const { request, env } = await setup();
   let a = await request("/admin");
   a = await request("/admin", {
@@ -192,7 +247,7 @@ test("reject invalid plans, closed choices, invalid origins and unknown payloads
         c.code,
       )
     ).status,
-    400,
+    403,
   );
   assert.equal(
     (
@@ -222,7 +277,7 @@ test("reject invalid plans, closed choices, invalid origins and unknown payloads
     403,
   );
 });
-test("100 concurrent votes are all retained", async () => {
+test("100 choices are imported in one atomic admin update", async () => {
   const { request } = await setup();
   let a = await request("/admin");
   a = await request("/admin", {
@@ -230,26 +285,28 @@ test("100 concurrent votes are all retained", async () => {
     count: 100,
     revision: a.data.revision,
   });
-  const codes = a.data.state.children.map((c) => c.code);
-  a = await request("/admin", {
-    action: "open",
-    open: true,
-    revision: a.data.revision,
-  });
-  const results = await Promise.all(
-    codes.map((code) =>
-      request("/choice", { choices: ["1", "2", "3", "4"], version: 0 }, code),
-    ),
-  );
-  assert.ok(
-    results.every((r) => r.status === 200),
-    JSON.stringify(results.filter((r) => r.status !== 200)),
-  );
+  const rows = a.data.state.children.map((c) => ({ id: c.id, choices: ["1", "2", "3", "4"] }));
+  assert.equal((await request("/admin", { action: "choices", rows: rows.slice(1), revision: a.data.revision })).status, 400);
+  a = await request("/admin", { action: "choices", rows, revision: a.data.revision });
+  assert.equal(a.status, 200);
   const final = await request("/admin");
   assert.equal(
     final.data.state.children.filter((c) => c.version === 1).length,
     100,
   );
+});
+
+test("admin reset clears test children but preserves offers", async () => {
+  const { request } = await setup();
+  let a = await request("/admin");
+  a = await request("/admin", { action: "children", count: 2, revision: a.data.revision });
+  const previousKey = a.data.state.accessKey;
+  const titles = a.data.state.projects.map((p) => p.title);
+  a = await request("/admin", { action: "reset", revision: a.data.revision });
+  assert.equal(a.status, 200);
+  assert.equal(a.data.state.children.length, 0);
+  assert.deepEqual(a.data.state.projects.map((p) => p.title), titles);
+  assert.notEqual(a.data.state.accessKey, previousKey);
 });
 
 test("four-digit codes are unique and protected by project link and attempt limit", async () => {
