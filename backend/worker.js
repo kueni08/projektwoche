@@ -73,6 +73,7 @@ function mutate(s, b) {
       s.assignments = {};
       s.fixed = [];
       s.relations = [];
+      s.wintermarktband = [];
       s.planStatus = "draft";
       break;
     case "projects": {
@@ -117,6 +118,17 @@ function mutate(s, b) {
       s.assignments = Object.fromEntries(Object.entries(s.assignments).filter(([id]) => ids.has(id)));
       s.fixed = s.fixed.filter((id) => ids.has(id));
       s.relations = (s.relations || []).filter((r) => ids.has(r.a) && ids.has(r.b));
+      s.wintermarktband = (s.wintermarktband || []).filter((id) => ids.has(id));
+      s.planStatus = "draft";
+      break;
+    }
+    case "wintermarktband": {
+      if (!Array.isArray(b.children) || b.children.length > s.children.length)
+        fail("Ungültige Wintermarktband-Liste.");
+      const ids = new Set(s.children.map((c) => c.id));
+      if (new Set(b.children).size !== b.children.length || b.children.some((id) => !ids.has(id)))
+        fail("Wintermarktband: unbekanntes oder doppeltes Kind.");
+      s.wintermarktband = [...b.children];
       s.planStatus = "draft";
       break;
     }

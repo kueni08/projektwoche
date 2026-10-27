@@ -3,8 +3,9 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { readFileSync } from "node:fs";
 import { initialState, allocate, validatePlan } from "../public/model.js";
+import { dailySchedule, groupAttendance } from "../public/schedule.js";
 import ExcelJS from "exceljs";
-import { makeRosterTemplate, parseRosterTemplate } from "../public/excel.js";
+import { makeRosterTemplate, makeDummyRosterTemplate, parseRosterTemplate } from "../public/excel.js";
 import worker from "../backend/worker.js";
 globalThis.ExcelJS = ExcelJS;
 function database() {
@@ -77,6 +78,35 @@ test("100 children receive two distinct chosen offers with balanced sizes", () =
       .counts.flat()
       .every((n) => n === 11 || n === 12),
   );
+});
+test("Wintermarktband schliesst Waldtage in beiden Blöcken aus", () => {
+  const s = initialState();
+  s.children = Array.from({ length: 20 }, (_, i) => ({
+    id: `K${i}`, choices: s.projects.map((p) => p.id),
+  }));
+  s.wintermarktband = ["K0", "K1", "K2"];
+  const result = allocate(s);
+  assert.equal(result.missing, 0);
+  for (const id of s.wintermarktband) assert.ok(result.plan[id].every((p) => p !== "7"));
+  assert.deepEqual(validatePlan(s, result.plan, { complete: true }).issues, []);
+  result.plan.K0[0] = "7";
+  assert.match(validatePlan(s, result.plan).issues.join(" "), /andere Gruppe/);
+});
+test("Tagesplan weist Band und Projekt den richtigen Zeiten zu", () => {
+  const s = initialState();
+  s.children = [
+    { id: "A", choices: ["1", "2", "3", "4"] },
+    { id: "B", choices: ["1", "2", "3", "4"] },
+  ];
+  s.assignments = { A: ["1", "2"], B: ["1", "3"] };
+  s.wintermarktband = ["A"];
+  assert.deepEqual(dailySchedule(s, "A", "mo"), { projectId: "1", band: true, early: "Wintermarktband", late: "1", conflict: false });
+  assert.equal(dailySchedule(s, "A", "do").late, "2");
+  assert.equal(dailySchedule(s, "B", "di").early, "1");
+  assert.deepEqual(groupAttendance(s, "1", "mo").early.map((c) => c.id), ["B"]);
+  assert.deepEqual(groupAttendance(s, "1", "mo").late.map((c) => c.id), ["A", "B"]);
+  s.assignments.A[0] = "7";
+  assert.equal(dailySchedule(s, "A", "mo").conflict, true);
 });
 test("restricted choices, fixed pairs, unavailable offers and shortage", () => {
   const s = initialState();
@@ -154,6 +184,17 @@ test("Excel-Liste rundum: Kürzel, Namen und Wahlen", async () => {
   await assert.rejects(parseRosterTemplate(await workbook.xlsx.writeBuffer(), initialState()), /nur mit x/);
 });
 
+test("Dummy-Liste lässt sich mit aktuellen Angeboten importieren", async () => {
+  const s = initialState();
+  s.projects[0].title = "Ein umbenanntes Angebot";
+  const parsed = await parseRosterTemplate(await makeDummyRosterTemplate(s), s);
+  assert.equal(parsed.rows.length, 18);
+  assert.equal(parsed.answered, 18);
+  assert.equal(parsed.rows[0].choices.length, 5);
+  assert.equal(parsed.names.TEST01, "Testkind 01");
+  assert.equal(new Set(parsed.rows.map((r) => r.id)).size, 18);
+});
+
 test("Lehrpersonen importieren komplette Liste atomar und ohne Namen im Server", async () => {
   const { request } = await setup();
   assert.equal((await request("/admin", undefined, "wrong")).status, 401);
@@ -190,6 +231,20 @@ test("Paarvorgaben bleiben online und entfernte Kürzel werden bereinigt", async
   a = await request("/admin", { action: "roster", rows: [{ id: "A", choices: ["1", "2", "3", "4"] }], revision: a.data.revision });
   assert.equal(a.data.state.children.length, 1);
   assert.equal(a.data.state.relations.length, 0);
+});
+test("Wintermarktband ist einzeln speicherbar und verhindert Waldtage im Plan", async () => {
+  const { request } = await setup();
+  let a = await request("/admin");
+  a = await request("/admin", { action: "roster", rows: [
+    { id: "A", choices: ["1", "2", "3", "7"] },
+    { id: "B", choices: ["1", "2", "3", "4"] },
+  ], revision: a.data.revision });
+  a = await request("/admin", { action: "wintermarktband", children: ["A"], revision: a.data.revision });
+  assert.deepEqual(a.data.state.wintermarktband, ["A"]);
+  assert.equal((await request("/admin", { action: "wintermarktband", children: ["A", "A"], revision: a.data.revision })).status, 400);
+  assert.equal((await request("/admin", { action: "plan", plan: { A: ["7", "1"], B: ["1", "2"] }, revision: a.data.revision, allowOutside: true })).status, 400);
+  a = await request("/admin", { action: "roster", rows: [{ id: "B", choices: ["1", "2", "3", "4"] }], revision: a.data.revision });
+  assert.deepEqual(a.data.state.wintermarktband, []);
 });
 
 test("100 Kinderlisten-Zeilen werden gemeinsam gespeichert", async () => {

@@ -11,9 +11,12 @@ export function initialState() {
     assignments: {},
     fixed: [],
     relations: [],
+    wintermarktband: [],
     planStatus: "draft",
   };
 }
+export const WALD_PROJECT_ID = "7";
+export const isWintermarktband = (state, id) => (state.wintermarktband || []).includes(id);
 export function validatePlan(
   state,
   plan,
@@ -40,6 +43,8 @@ export function validatePlan(
         return;
       }
       counts[i][b]++;
+      if (id === WALD_PROJECT_ID && isWintermarktband(state, child.id))
+        issues.push(`${child.id}: Wintermarktband und Waldtage und Basteln überschneiden sich in Block ${b + 1}. Das Kind muss in eine andere Gruppe.`);
       if (!allowOutside && !child.choices.includes(id))
         issues.push(`${child.id}: Angebot nicht gewählt.`);
     });
@@ -64,7 +69,7 @@ export function validatePlan(
   return { issues, counts };
 }
 // Successive shortest augmenting paths, convex seat costs favour equal groups.
-function match(children, projects, block, excluded, fixed, seed) {
+function match(state, children, projects, block, excluded, fixed, seed) {
   const n = children.length,
     source = 0,
     childStart = 1,
@@ -93,7 +98,7 @@ function match(children, projects, block, excluded, fixed, seed) {
     edge(source, childStart + i, 1, 0);
     c.choices.forEach((id) => {
       const j = projects.findIndex((p) => p.id === id);
-      if (j < 0 || excluded[c.id] === id) return;
+      if (j < 0 || excluded[c.id] === id || isWintermarktband(state, c.id) && id === WALD_PROJECT_ID) return;
       const tie = ((i + 1) * 17 + (j + 1) * 31 + seed * (i + 7) * (j + 3)) % 19;
       links.push({
         id: c.id,
@@ -143,6 +148,7 @@ function candidatePlan(state, fixed, seed) {
   const first = seed % 2,
     second = 1 - first;
   const a = match(
+      state,
       state.children,
       state.projects,
       first,
@@ -151,6 +157,7 @@ function candidatePlan(state, fixed, seed) {
       seed,
     ),
     b = match(
+      state,
       state.children,
       state.projects,
       second,
@@ -210,6 +217,7 @@ function constrainedUnits(state) {
     for (const a of state.projects)
       for (const b of state.projects)
         if (a.id !== b.id && a.capacity[0] >= members.length && b.capacity[1] >= members.length &&
+          (!members.some((c) => isWintermarktband(state, c.id)) || a.id !== WALD_PROJECT_ID && b.id !== WALD_PROJECT_ID) &&
           (fixedPair ? a.id === fixedPair[0] && b.id === fixedPair[1] : choices.includes(a.id) && choices.includes(b.id)) &&
           (!fixedPair || members.every((c) => state.fixed.includes(c.id) || c.choices.includes(a.id) && c.choices.includes(b.id))))
           candidates.push([a.id, b.id]);

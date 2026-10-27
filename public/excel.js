@@ -36,6 +36,22 @@ export async function makeRosterTemplate(state, names) {
   return workbook.xlsx.writeBuffer();
 }
 
+export function dummyRoster(state) {
+  const children = Array.from({ length: 18 }, (_, index) => ({
+    id: `TEST${String(index + 1).padStart(2, "0")}`,
+    choices: Array.from({ length: 5 }, (_, offset) =>
+      state.projects[(index + offset * 2) % state.projects.length].id),
+  }));
+  const names = Object.fromEntries(children.map((child, index) =>
+    [child.id, `Testkind ${String(index + 1).padStart(2, "0")}`]));
+  return { children, names };
+}
+
+export async function makeDummyRosterTemplate(state) {
+  const { children, names } = dummyRoster(state);
+  return makeRosterTemplate({ ...state, children }, names);
+}
+
 export async function parseRosterTemplate(buffer, state) {
   const workbook = new globalThis.ExcelJS.Workbook();
   await workbook.xlsx.load(buffer);

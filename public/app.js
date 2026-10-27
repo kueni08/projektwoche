@@ -1,6 +1,7 @@
 import { API_URL } from "./config.js";
-import { allocate, validatePlan } from "./model.js";
-import { makeRosterTemplate, parseRosterTemplate } from "./excel.js";
+import { allocate, validatePlan, isWintermarktband, WALD_PROJECT_ID } from "./model.js";
+import { makeRosterTemplate, makeDummyRosterTemplate, parseRosterTemplate } from "./excel.js";
+import { DAYS, dailySchedule, groupAttendance } from "./schedule.js";
 const $ = (s) => document.querySelector(s),
   esc = (s) =>
     String(s ?? "").replace(
@@ -74,6 +75,7 @@ function state() {
 const name = (id) => names[id] || id;
 const projectName = (id) =>
   state().projects.find((p) => p.id === id)?.title || "Noch offen";
+const offerTone = (id) => `offer-tone-${Number(id) || 1}`;
 function blocks() {
   return '<div class="blocks"><div class="block"><small>BLOCK 01</small><strong>Mo. + Di.</strong><small>Dein erster Posten</small></div><div class="block"><small>BLOCK 02</small><strong>Mi. + Do.</strong><small>Dein zweiter Posten</small></div></div>';
 }
@@ -140,7 +142,7 @@ function renderPublic() {
   const p = publicData;
   $("#app").innerHTML =
     `<section class="intro"><div><span class="eyebrow">${esc(p.title)}</span><h1>Unsere neun Posten</h1><p>Jedes Kind besucht zwei verschiedene Posten – jeweils zwei Tage lang. Die Lehrpersonen erfassen die Befragung und erstellen die Gruppeneinteilung.</p></div>${blocks()}</section>
- <div class="grid">${p.projects.map((offer, i) => `<article class="card" data-card="${offer.id}"><span class="number">${String(i + 1).padStart(2, "0")}</span><h3>${esc(offer.title)}</h3><p>${esc(offer.description)}</p></article>`).join("")}</div>`;
+ <div class="grid">${p.projects.map((offer, i) => `<article class="card offer-card ${offerTone(offer.id)}" data-card="${offer.id}"><span class="number">${String(i + 1).padStart(2, "0")}</span><h3>${esc(offer.title)}</h3><p>${esc(offer.description)}</p></article>`).join("")}</div>`;
 }
 function renderAdminLogin() {
   $("#app").innerHTML =
@@ -243,7 +245,7 @@ function renderAdmin() {
 function renderProjects() {
   const s = state();
   $("#content").innerHTML =
-    `<form id="projects-form"><div class="panel"><label class="field">Titel der Projektwoche<input name="title" value="${esc(s.title)}" maxlength="100" required></label><p class="small">0 Plätze bedeutet: Das Angebot findet in diesem Block nicht statt.</p></div><div class="grid">${s.projects.map((p) => `<article class="card"><span class="number">${p.id.padStart(2, "0")}</span><label class="field">Name des Angebots<input name="title-${p.id}" value="${esc(p.title)}" maxlength="100" required></label><label class="field">Beschreibung<textarea name="desc-${p.id}" maxlength="2000" required>${esc(p.description)}</textarea></label><div class="row"><label class="field">Plätze Mo. + Di.<input type="number" name="a-${p.id}" value="${p.capacity[0]}" min="0" max="200" required></label><label class="field">Plätze Mi. + Do.<input type="number" name="b-${p.id}" value="${p.capacity[1]}" min="0" max="200" required></label></div></article>`).join("")}</div><div class="savebar"><span>Änderungen gelten auf allen PCs.</span><button>Angebote speichern</button></div></form>`;
+    `<form id="projects-form"><div class="panel"><label class="field">Titel der Projektwoche<input name="title" value="${esc(s.title)}" maxlength="100" required></label><p class="small">0 Plätze bedeutet: Das Angebot findet in diesem Block nicht statt.</p></div><div class="grid">${s.projects.map((p) => `<article class="card offer-card ${offerTone(p.id)}"><span class="number">${p.id.padStart(2, "0")}</span><label class="field">Name des Angebots<input name="title-${p.id}" value="${esc(p.title)}" maxlength="100" required></label><label class="field">Beschreibung<textarea name="desc-${p.id}" maxlength="2000" required>${esc(p.description)}</textarea></label><div class="row"><label class="field">Plätze Mo. + Di.<input type="number" name="a-${p.id}" value="${p.capacity[0]}" min="0" max="200" required></label><label class="field">Plätze Mi. + Do.<input type="number" name="b-${p.id}" value="${p.capacity[1]}" min="0" max="200" required></label></div></article>`).join("")}</div><div class="savebar"><span>Änderungen gelten auf allen PCs.</span><button>Angebote speichern</button></div></form>`;
   $("#projects-form").oninput = () => (dirty = true);
   $("#projects-form").onsubmit = (e) => {
     e.preventDefault();
@@ -263,10 +265,14 @@ function renderProjects() {
 function renderChildren() {
   const s = state();
   $("#content").innerHTML =
-    `<div class="panel"><h2>Kinderliste und Vorauswahl</h2><p>Eine Excel-Datei enthält pro Kind Kürzel, Name und die angekreuzten Angebote. Lade die aktuelle Liste herunter, ergänze sie und importiere sie wieder. Der Import ersetzt die gemeinsame Kinderliste und die Wahlen. Namen bleiben ausschliesslich auf diesem Gerät.</p><div class="row"><button id="download-roster">Excel-Liste herunterladen</button><label class="button quiet">Excel-Liste importieren<input id="import-roster" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style="display:none"></label></div><div id="import-preview"></div></div><div class="panel"><div class="row between"><h2>Aktuelle Liste · ${s.children.length} Kinder</h2><button id="forget-names" class="quiet">Lokale Namen hier entfernen</button></div><p class="small">Online werden nur Kürzel und Wahlen gespeichert. Für Namen auf einem anderen PC die Excel-Liste dort importieren.</p><div class="table-wrap"><table><thead><tr><th>Kürzel</th><th>Name · nur lokal</th><th>Gewählte Posten</th><th>Status</th></tr></thead><tbody>${s.children.map((c) => `<tr><td>${esc(c.id)}</td><td>${esc(names[c.id] || "—")}</td><td>${c.choices.map((id) => esc(s.projects.find((p) => p.id === id)?.title || id)).join(", ") || "—"}</td><td>${c.choices.length >= 4 ? "Erfasst" : "Offen"}</td></tr>`).join("")}</tbody></table></div></div>`;
+    `<div class="panel"><h2>Kinderliste und Vorauswahl</h2><p>Eine Excel-Datei enthält pro Kind Kürzel, Name und die angekreuzten Angebote. Lade die aktuelle Liste herunter, ergänze sie und importiere sie wieder. Der Import ersetzt die gemeinsame Kinderliste und die Wahlen. Namen bleiben ausschliesslich auf diesem Gerät.</p><div class="row"><button id="download-roster">Excel-Liste herunterladen</button><button id="download-dummy" class="quiet">Dummy-Liste zum Test herunterladen</button><label class="button quiet">Excel-Liste importieren<input id="import-roster" type="file" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" style="display:none"></label></div><p class="small">Die Dummy-Liste enthält 18 fiktive Kinder mit je fünf angekreuzten Angeboten. Ein Import ersetzt die gesamte aktuelle Kinderliste.</p><div id="import-preview"></div></div><div class="panel"><div class="row between"><h2>Aktuelle Liste · ${s.children.length} Kinder</h2><button id="forget-names" class="quiet">Lokale Namen hier entfernen</button></div><p class="small">Online werden nur Kürzel und Wahlen gespeichert. Für Namen auf einem anderen PC die Excel-Liste dort importieren.</p><div class="table-wrap"><table><thead><tr><th>Kürzel</th><th>Name · nur lokal</th><th>Gewählte Posten</th><th>Status</th></tr></thead><tbody>${s.children.map((c) => `<tr><td>${esc(c.id)}</td><td>${esc(names[c.id] || "—")}</td><td>${c.choices.map((id) => esc(s.projects.find((p) => p.id === id)?.title || id)).join(", ") || "—"}</td><td>${c.choices.length >= 4 ? "Erfasst" : "Offen"}</td></tr>`).join("")}</tbody></table></div></div>`;
   $("#download-roster").onclick = async () => {
     try { download("projektwoche-kinderliste.xlsx", await makeRosterTemplate(s, names), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"); }
     catch (e) { notice("Excel-Liste konnte nicht erstellt werden: " + e.message); }
+  };
+  $("#download-dummy").onclick = async () => {
+    try { download("projektwoche-dummy-kinderliste.xlsx", await makeDummyRosterTemplate(s), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"); }
+    catch (e) { notice("Dummy-Liste konnte nicht erstellt werden: " + e.message); }
   };
   $("#import-roster").onchange = async (event) => {
     try {
@@ -307,7 +313,7 @@ function renderPlan() {
   const s = state(),
     check = validatePlan(s, s.assignments, { allowOutside: true });
   $("#content").innerHTML =
-    `<div class="panel"><div class="row between"><div><h2>Gruppen für zwei Blöcke</h2><p class="small">Der Vorschlag berücksichtigt die Wünsche und gleicht Gruppengrössen aus. Fixierte Kinder bleiben an ihrem Platz.</p></div><button id="generate" ${!s.children.length ? "disabled" : ""}>Verteilung vorschlagen</button></div><div class="grid">${s.projects.map((p, i) => `<div><h3>${esc(p.title)}</h3><p class="small">Mo. + Di. <strong>${check.counts[i][0]} / ${p.capacity[0]}</strong><br>Mi. + Do. <strong>${check.counts[i][1]} / ${p.capacity[1]}</strong></p></div>`).join("")}</div></div><div class="panel"><div class="table-wrap"><table><thead><tr><th>Kind</th><th>Mo. + Di.</th><th>Mi. + Do.</th><th>Fixieren</th></tr></thead><tbody>${s.children.map((c) => `<tr><td>${esc(name(c.id))}<br><span class="small">${c.id}</span></td>${[0, 1].map((b) => `<td><select data-assign="${c.id}" data-block="${b}" aria-label="${c.id}, Block ${b + 1}" ${s.fixed.includes(c.id) ? "disabled" : ""}><option value="">Noch offen</option>${s.projects.map((p) => `<option value="${p.id}" ${s.assignments[c.id]?.[b] === p.id ? "selected" : ""}>${esc(p.title)}${c.choices.includes(p.id) ? " ✓" : " · nicht gewählt"}</option>`).join("")}</select></td>`).join("")}<td><input type="checkbox" data-fix="${c.id}" aria-label="${c.id} fixieren" ${s.fixed.includes(c.id) ? "checked" : ""}></td></tr>`).join("")}</tbody></table></div><div id="plan-feedback"></div><label class="choose" style="margin:20px 0"><input type="checkbox" id="allow-outside">Ich bestätige Zuteilungen ausserhalb der gewählten Angebote.</label><div class="row"><button id="save-plan">Änderungen speichern</button><button id="finalize" class="quiet" >Plan freigeben</button></div><p class="small">Neue Änderungen machen den Plan wieder zum Entwurf. Die Einteilung kann unter «Drucken» ausgegeben werden.</p></div>`;
+    `<div class="panel"><div class="row between"><div><h2>Gruppen für zwei Blöcke</h2><p class="small">Der Vorschlag berücksichtigt die Wünsche und gleicht Gruppengrössen aus. Fixierte Kinder bleiben an ihrem Platz.</p></div><button id="generate" ${!s.children.length ? "disabled" : ""}>Verteilung vorschlagen</button></div><div class="grid">${s.projects.map((p, i) => `<div class="offer-summary ${offerTone(p.id)}"><h3>${esc(p.title)}</h3><p class="small">Mo. + Di. <strong>${check.counts[i][0]} / ${p.capacity[0]}</strong><br>Mi. + Do. <strong>${check.counts[i][1]} / ${p.capacity[1]}</strong></p></div>`).join("")}</div></div><div class="panel"><div class="table-wrap"><table><thead><tr><th>Kind</th><th>Mo. + Di.</th><th>Mi. + Do.</th><th>Fixieren</th></tr></thead><tbody>${s.children.map((c) => `<tr><td>${esc(name(c.id))}<br><span class="small">${c.id}</span></td>${[0, 1].map((b) => `<td><select data-assign="${c.id}" data-block="${b}" aria-label="${c.id}, Block ${b + 1}" ${s.fixed.includes(c.id) ? "disabled" : ""}><option value="">Noch offen</option>${s.projects.map((p) => `<option value="${p.id}" ${s.assignments[c.id]?.[b] === p.id ? "selected" : ""}>${esc(p.title)}${c.choices.includes(p.id) ? " ✓" : " · nicht gewählt"}</option>`).join("")}</select></td>`).join("")}<td><input type="checkbox" data-fix="${c.id}" aria-label="${c.id} fixieren" ${s.fixed.includes(c.id) ? "checked" : ""}></td></tr>`).join("")}</tbody></table></div><div id="plan-feedback"></div><label class="choose" style="margin:20px 0"><input type="checkbox" id="allow-outside">Ich bestätige Zuteilungen ausserhalb der gewählten Angebote.</label><div class="row"><button id="save-plan">Änderungen speichern</button><button id="finalize" class="quiet" >Plan freigeben</button></div><p class="small">Neue Änderungen machen den Plan wieder zum Entwurf. Die Einteilung kann unter «Drucken» ausgegeben werden.</p></div>`;
   const rules = s.relations || [];
   const childOptions = s.children.map((c) => `<option value="${esc(c.id)}">${esc(name(c.id))} (${esc(c.id)})</option>`).join("");
   $("#content").insertAdjacentHTML("afterbegin",
@@ -324,14 +330,35 @@ function renderPlan() {
       if (dirty) { notice("Zuerst die Zuteilung speichern oder neu laden."); return; }
       save({ action: "relations", relations: rules.filter((_, i) => i !== Number(button.dataset.removeRule)) });
     });
+  const bandIds = s.wintermarktband || [];
+  const bandConflicts = bandIds.flatMap((id) =>
+    (s.assignments[id] || []).map((project, block) =>
+      project === WALD_PROJECT_ID ? { id, block } : null).filter(Boolean));
+  $("#content").insertAdjacentHTML("afterbegin",
+    `<div class="panel band-panel"><span class="eyebrow">Zusatzangebot</span><h2>Wintermarktband</h2><p>Teilnehmende Kinder sind an jedem Morgen von <strong>08.20–09.55 Uhr</strong> in der Wintermarktband. Ihr eingeteilter Posten beginnt für sie erst um <strong>10.25 Uhr</strong> und dauert bis <strong>12.00 Uhr</strong>.</p><form id="band-form" class="row"><label class="field">Kind auswählen<select name="child" required><option value="">Bitte wählen</option>${s.children.filter((c) => !bandIds.includes(c.id)).map((c) => `<option value="${esc(c.id)}">${esc(name(c.id))} (${esc(c.id)})</option>`).join("")}</select></label><button ${bandIds.length === s.children.length ? "disabled" : ""}>Zur Wintermarktband hinzufügen</button></form><div class="band-list">${bandIds.length ? bandIds.map((id) => `<span class="band-chip">${esc(name(id))} <small>${esc(id)}</small><button class="quiet mini" data-remove-band="${esc(id)}" aria-label="${esc(name(id))} aus der Wintermarktband entfernen">Entfernen</button></span>`).join("") : '<span class="small">Noch kein Kind ausgewählt.</span>'}</div>${bandConflicts.map(({ id, block }) => `<p class="band-conflict">⚠ ${esc(name(id))} (${esc(id)}) ist in Block ${block + 1} bei Waldtage und Basteln eingeteilt. Nach Beginn ist kein Dazustossen möglich. Bitte in eine andere Gruppe umteilen.</p>`).join("")}</div>`);
+  $("#band-form").onsubmit = (event) => {
+    event.preventDefault();
+    if (dirty) { notice("Zuerst die Zuteilung speichern oder neu laden."); return; }
+    const id = new FormData(event.target).get("child");
+    if (!id || bandIds.includes(id)) return;
+    save({ action: "wintermarktband", children: [...bandIds, id] });
+  };
+  document.querySelectorAll("[data-remove-band]").forEach((button) =>
+    button.onclick = () => {
+      if (dirty) { notice("Zuerst die Zuteilung speichern oder neu laden."); return; }
+      save({ action: "wintermarktband", children: bandIds.filter((id) => id !== button.dataset.removeBand) });
+    });
   let draft = structuredClone(s.assignments);
   const feedback = () => {
     const c = validatePlan(s, draft, { allowOutside: true });
     const missing = s.children.filter(
       (k) => !(draft[k.id] || []).length || (draft[k.id] || []).some((x) => !x),
     ).length;
+    const conflicts = c.issues.filter((issue) => issue.includes("Wintermarktband und Waldtage"));
     $("#plan-feedback").innerHTML =
-      `<div class="warning">${missing} Kinder noch nicht vollständig zugeteilt.${c.issues.length ? " " + esc(c.issues.join(" ")) : ""} ${dirty ? "Vorschlag noch nicht gespeichert." : ""}</div>`;
+      `<div class="warning">${missing} Kinder noch nicht vollständig zugeteilt.${c.issues.length ? " " + esc(c.issues.join(" ")) : ""} ${dirty ? "Vorschlag noch nicht gespeichert." : ""}</div>${conflicts.map((issue) => `<p class="band-conflict">⚠ ${esc(issue)}</p>`).join("")}`;
+    document.querySelectorAll("[data-assign]").forEach((select) =>
+      select.closest("tr").classList.toggle("band-conflict-row", isWintermarktband(s, select.dataset.assign) && (draft[select.dataset.assign] || []).includes(WALD_PROJECT_ID)));
   };
   feedback();
   document.querySelectorAll("[data-assign]").forEach(
@@ -412,42 +439,45 @@ function renderPlan() {
 function renderPrint() {
   const s = state();
   $("#content").innerHTML =
-    `<div class="panel no-print"><h2>Druckübersichten</h2><p>Die Vorschau ergänzt Namen ausschliesslich auf diesem PC. Ohne Namensliste werden die Kennungen gedruckt.</p><div class="row"><label class="field">Ansicht<select id="print-type"><option value="groups">Gruppenlisten je Posten und Block</option><option value="all">Gesamtübersicht</option><option value="personal">Persönliche Wochenpläne</option></select></label><button id="print">Drucken / PDF speichern</button></div>${s.planStatus !== "final" ? '<div class="warning">Der Gruppenplan ist noch ein Entwurf. Ausdrucke sind entsprechend gekennzeichnet.</div>' : ""}</div><div id="print-preview"></div>`;
+    `<div class="panel no-print"><h2>Druckübersichten</h2><p>Jede Gruppenliste zeigt für einen Tag, welche Kinder um 08.20 Uhr und welche erst um 10.25 Uhr zum Posten kommen. Namen werden nur auf diesem PC ergänzt.</p><div class="row"><label class="field">Druckformat<select id="print-type"><option value="groups">Postenliste je Tag</option><option value="band">Wintermarktband je Tag</option><option value="all">Gesamtübersicht</option><option value="personal">Ablaufplan je Kind</option></select></label><label class="field" id="day-filter">Tag<select id="print-day"><option value="all">Alle Tage</option>${DAYS.map((d) => `<option value="${d.id}">${d.label}</option>`).join("")}</select></label><label class="field" id="offer-filter">Posten<select id="print-offer"><option value="all">Alle Posten</option>${s.projects.map((p) => `<option value="${p.id}">${esc(p.title)}</option>`).join("")}</select></label><button id="print">Drucken / PDF speichern</button></div>${s.planStatus !== "final" ? '<div class="warning">Der Gruppenplan ist noch ein Entwurf. Ausdrucke sind entsprechend gekennzeichnet.</div>' : ""}</div><div id="print-preview"></div>`;
+  const heading = (title, subtitle, tone = "") =>
+    `<div class="print-heading ${tone}"><span class="eyebrow">${esc(s.title)} · ${s.planStatus === "final" ? "Freigegeben" : "Entwurf"}</span><h1>${esc(title)}</h1><p>${esc(subtitle)}</p></div>`;
+  const chip = (id) => id
+    ? `<span class="offer-chip ${offerTone(id)}">${esc(projectName(id))}</span>`
+    : '<span class="small">Noch offen</span>';
+  const childLabel = (c) => `${esc(name(c.id))} <small class="small">${esc(c.id)}</small>`;
+  const conflict = (id, dayId) => dailySchedule(s, id, dayId).conflict
+    ? `<p class="band-conflict">⚠ ${esc(name(id))} kann nach der Wintermarktband nicht zu Waldtage und Basteln dazustossen. Bitte in eine andere Gruppe umteilen.</p>`
+    : "";
   const show = () => {
     const type = $("#print-type").value,
-      heading = `<h1>${esc(s.title)}</h1><p>${s.planStatus === "final" ? "Freigegebener Plan" : "ENTWURF"} · Stand ${new Date().toLocaleString("de-CH")}</p>`;
+      dayId = $("#print-day").value,
+      offerId = $("#print-offer").value,
+      days = DAYS.filter((d) => dayId === "all" || d.id === dayId);
+    $("#day-filter").hidden = type === "all" || type === "personal";
+    $("#offer-filter").hidden = type !== "groups";
     let html = "";
     if (type === "groups") {
-      for (const b of [0, 1])
-        for (const p of s.projects) {
-          const kids = s.children.filter(
-            (c) => s.assignments[c.id]?.[b] === p.id,
-          );
-          html += `<section class="panel print-page">${heading}<h2>${esc(p.title)}</h2><p>${b === 0 ? "Montag + Dienstag" : "Mittwoch + Donnerstag"} · ${kids.length} Kinder</p><table><thead><tr><th>Kind</th><th>Kürzel</th><th>Anwesenheit</th><th>Notizen</th></tr></thead><tbody>${kids.map((c) => `<tr><td>${esc(name(c.id))}</td><td>${esc(c.id)}</td><td>□ &nbsp; □</td><td>________________</td></tr>`).join("")}</tbody></table></section>`;
-        }
+      for (const day of days) for (const p of s.projects.filter((offer) => offerId === "all" || offer.id === offerId)) {
+        const attendance = groupAttendance(s, p.id, day.id);
+        if (!attendance.late.length && offerId === "all") continue;
+        html += `<section class="panel print-page print-sheet ${offerTone(p.id)}">${heading(p.title, `${day.label} · ${attendance.late.length} Kinder · ${attendance.early.length} ab 08.20 Uhr`, offerTone(p.id))}<div class="print-times"><strong>08.20–09.55 Uhr</strong><span>Posten oder Wintermarktband</span><strong>10.25–12.00 Uhr</strong><span>Alle eingeteilten Kinder im Posten</span></div><table class="schedule-table"><thead><tr><th>Kind</th><th>Kürzel</th><th>08.20–09.55</th><th>10.25–12.00</th></tr></thead><tbody>${attendance.late.map((c) => `<tr class="${isWintermarktband(s, c.id) && p.id === WALD_PROJECT_ID ? "band-conflict-row" : ""}"><td>${esc(name(c.id))}</td><td>${esc(c.id)}</td><td>${isWintermarktband(s, c.id) ? "Wintermarktband" : "Hier"}</td><td>Hier</td></tr>`).join("")}</tbody></table>${attendance.conflict.map((c) => conflict(c.id, day.id)).join("")}<p class="print-foot">Stand: ${new Date().toLocaleString("de-CH")} · Bitte Anwesenheit und Wechsel vor Ort prüfen.</p></section>`;
+      }
+    } else if (type === "band") {
+      for (const day of days) {
+        const ids = s.wintermarktband || [];
+        html += `<section class="panel print-page print-sheet band-sheet">${heading("Wintermarktband", `${day.label} · 08.20–09.55 Uhr · ${ids.length} Kinder`)}<table class="schedule-table"><thead><tr><th>Kind</th><th>Kürzel</th><th>Ab 10.25 Uhr im Posten</th></tr></thead><tbody>${ids.map((id) => `<tr><td>${esc(name(id))}</td><td>${esc(id)}</td><td>${chip(s.assignments[id]?.[day.block])}</td></tr>`).join("")}</tbody></table>${ids.map((id) => conflict(id, day.id)).join("")}<p class="print-foot">Ende Wintermarktband 09.55 Uhr · Nächster Posten ab 10.25 Uhr.</p></section>`;
+      }
+    } else if (type === "all") {
+      html = `<section class="panel print-sheet">${heading("Gesamtübersicht", `${s.children.length} Kinder · Montag bis Donnerstag`)}<table class="schedule-table"><thead><tr><th>Kind</th><th>Kürzel</th><th>Mo. + Di.</th><th>Mi. + Do.</th><th>08.20–09.55 Uhr</th></tr></thead><tbody>${s.children.map((c) => `<tr><td>${esc(name(c.id))}</td><td>${esc(c.id)}</td><td>${chip(s.assignments[c.id]?.[0])}</td><td>${chip(s.assignments[c.id]?.[1])}</td><td>${isWintermarktband(s, c.id) ? "Wintermarktband" : "Eingeteilter Posten"}</td></tr>`).join("")}</tbody></table></section>`;
+    } else if (type === "personal") {
+      html = s.children.map((c) => `<section class="panel print-page print-sheet personal-sheet">${heading(`Ablaufplan · ${name(c.id)}`, `Kürzel ${c.id} · Montag bis Donnerstag`)}<table class="schedule-table personal-table"><thead><tr><th>Tag</th><th>08.20–09.55 Uhr</th><th>10.25–12.00 Uhr</th></tr></thead><tbody>${DAYS.map((day) => { const plan = dailySchedule(s, c.id, day.id); return `<tr class="${plan.conflict ? "band-conflict-row" : ""}"><th>${day.label}</th><td>${plan.band ? '<strong class="band-label">Wintermarktband</strong>' : chip(plan.early)}</td><td>${chip(plan.late)}</td></tr>`; }).join("")}</tbody></table>${DAYS.map((day) => conflict(c.id, day.id)).join("")}<p class="print-foot">Wechselpause 09.55–10.25 Uhr · Bei Änderungen gilt der aktuelle Plan der Lehrperson.</p></section>`).join("");
     }
-    if (type === "all")
-      html = `<section class="panel">${heading}<table><thead><tr><th>Kind</th><th>Mo. + Di.</th><th>Mi. + Do.</th></tr></thead><tbody>${s.children.map((c) => `<tr><td>${esc(name(c.id))}</td><td>${esc(projectName(s.assignments[c.id]?.[0]))}</td><td>${esc(projectName(s.assignments[c.id]?.[1]))}</td></tr>`).join("")}</tbody></table></section>`;
-    if (type === "personal")
-      html = s.children
-        .map(
-          (c) =>
-            `<section class="panel print-page">${heading}<h2>${esc(name(c.id))}</h2>${[
-              0, 1,
-            ]
-              .map((b) => {
-                const p = s.projects.find(
-                  (p) => p.id === s.assignments[c.id]?.[b],
-                );
-                return `<h3>${b === 0 ? "Montag + Dienstag" : "Mittwoch + Donnerstag"}: ${esc(p?.title || "Noch offen")}</h3><p>${esc(p?.description || "")}</p>`;
-              })
-              .join("")}</section>`,
-        )
-        .join("");
-    $("#print-preview").innerHTML =
-      html || '<div class="panel">Noch keine Kinder angelegt.</div>';
+    $("#print-preview").innerHTML = html || '<div class="panel">Für diese Auswahl sind noch keine Kinder eingeteilt.</div>';
   };
   $("#print-type").onchange = show;
+  $("#print-day").onchange = show;
+  $("#print-offer").onchange = show;
   $("#print").onclick = () => window.print();
   show();
 }
